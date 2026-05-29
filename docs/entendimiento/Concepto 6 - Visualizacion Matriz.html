@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Visualización 3D: Matriz de rotación 2D</title>
+<style>
+  body {
+    margin: 0;
+    font-family: -apple-system, system-ui, sans-serif;
+    background: #1a1a2e;
+    color: #eaeaea;
+    overflow: hidden;
+    height: 100vh;
+  }
+  #container {
+    display: flex;
+    height: 100vh;
+    width: 100vw;
+  }
+  #canvas-wrap {
+    flex: 1 1 auto;
+    position: relative;
+    min-width: 0;
+    min-height: 0;
+  }
+  canvas { display: block; }
+  #panel {
+    flex: 0 0 420px;
+    padding: 16px 20px;
+    background: #0f0f1a;
+    overflow-y: auto;
+    overflow-x: hidden;
+    box-shadow: -2px 0 10px rgba(0,0,0,0.3);
+    box-sizing: border-box;
+  }
+
+  /* Stack vertically on narrow screens */
+  @media (max-width: 900px) {
+    body { overflow: auto; }
+    #container { flex-direction: column; height: auto; min-height: 100vh; }
+    #canvas-wrap { height: 50vh; min-height: 400px; flex: 0 0 auto; }
+    #panel { flex: 1 1 auto; width: 100%; max-width: 100%; }
+  }
+  #panel h1 {
+    font-size: 18px;
+    margin: 0 0 4px 0;
+    color: #ffe066;
+  }
+  #panel h2 {
+    font-size: 12px;
+    margin: 16px 0 6px 0;
+    color: #ffe066;
+    opacity: 0.85;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border-bottom: 1px solid rgba(255,224,102,0.2);
+    padding-bottom: 4px;
+  }
+  .slider-block { margin: 8px 0; }
+  .slider-block label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    margin-bottom: 4px;
+  }
+  .slider-block input[type=range] { width: 100%; cursor: pointer; }
+  .value-display { font-family: monospace; color: #ffe066; }
+
+  /* Matrix styling */
+  .matrix-eq {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin: 14px 0;
+    flex-wrap: wrap;
+  }
+  .matrix, .vec {
+    display: inline-block;
+    position: relative;
+    padding: 4px 8px;
+    font-family: monospace;
+  }
+  .matrix::before, .matrix::after,
+  .vec::before, .vec::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 5px;
+    border: 2px solid #ffe066;
+  }
+  .matrix::before, .vec::before { left: 0; border-right: none; }
+  .matrix::after, .vec::after { right: 0; border-left: none; }
+  .matrix table, .vec table {
+    border-collapse: collapse;
+  }
+  .matrix td, .vec td {
+    padding: 4px 6px;
+    text-align: center;
+    font-size: 14px;
+    min-width: 42px;
+    color: #ffe066;
+  }
+  .matrix.body td, .vec.body td { color: #4ecdc4; }
+  .matrix.world td, .vec.world td { color: #ffaa44; }
+  .matrix.body::before, .matrix.body::after,
+  .vec.body::before, .vec.body::after { border-color: #4ecdc4; }
+  .matrix.world::before, .matrix.world::after,
+  .vec.world::before, .vec.world::after { border-color: #ffaa44; }
+  .op {
+    font-size: 24px;
+    color: #888;
+    font-weight: bold;
+  }
+
+  /* Step-by-step breakdown */
+  .step {
+    margin: 10px 0;
+    padding: 10px 12px;
+    background: rgba(255,255,255,0.03);
+    border-radius: 4px;
+    border-left: 3px solid #888;
+    font-family: monospace;
+    font-size: 13px;
+  }
+  .step.row0 { border-left-color: #ff5555; }
+  .step.row1 { border-left-color: #4488ff; }
+  .step-label {
+    font-size: 10px;
+    opacity: 0.7;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #ffe066;
+  }
+  .step-formula {
+    color: #cccccc;
+    line-height: 1.6;
+  }
+  .step .result {
+    color: #ffe066;
+    font-weight: bold;
+    font-size: 15px;
+  }
+
+  .presets { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+  .presets button {
+    background: #ffe066;
+    color: #1a1a2e;
+    border: none;
+    padding: 6px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: bold;
+  }
+  .presets button:hover { background: #ffd93d; }
+  .note {
+    font-size: 11px;
+    opacity: 0.75;
+    margin-top: 12px;
+    padding: 10px;
+    background: rgba(255,255,255,0.04);
+    border-radius: 4px;
+    line-height: 1.5;
+  }
+  .legend {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    background: rgba(15,15,26,0.88);
+    padding: 10px 14px;
+    border-radius: 6px;
+    font-size: 11px;
+    color: #eaeaea;
+    border: 1px solid rgba(255,224,102,0.3);
+    max-width: 280px;
+  }
+  .legend-title { margin-bottom: 6px; font-weight: bold; color: #ffe066; font-size: 13px; }
+  .legend-row { margin: 3px 0; display: flex; align-items: center; gap: 8px; }
+  .legend-color { width: 16px; height: 4px; border-radius: 2px; }
+  .legend-help {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255,255,255,0.1);
+    font-size: 10px;
+    opacity: 0.8;
+    line-height: 1.5;
+  }
+</style>
+</head>
+<body>
+
+<div id="container">
+  <div id="canvas-wrap">
+    <div class="legend">
+      <div class="legend-title">Escena 3D</div>
+      <div class="legend-row">
+        <span class="legend-color" style="background:#ff9900"></span>
+        <span>Vector relativo en world (dx, dz)</span>
+      </div>
+      <div class="legend-row">
+        <span class="legend-color" style="background:#ff3333"></span>
+        <span>Componente x_B en eje X_B</span>
+      </div>
+      <div class="legend-row">
+        <span class="legend-color" style="background:#2266ff"></span>
+        <span>Componente z_B en eje Z_B</span>
+      </div>
+      <div class="legend-help">
+        💡 La 3D es para contexto. <strong>El protagonista está en el panel</strong>: mirá la matriz y la multiplicación paso a paso.
+      </div>
+    </div>
+  </div>
+
+  <div id="panel">
+    <h1>Matriz de rotación 2D</h1>
+    <p style="font-size: 12px; opacity: 0.7; margin: 0;">Concepto 6 — visualización 3D</p>
+
+    <h2>Controles</h2>
+
+    <div class="slider-block">
+      <label>Yaw del Otter
+        <span class="value-display" id="yawVal">45°</span>
+      </label>
+      <input type="range" id="yaw" min="-180" max="180" value="45" step="1">
+    </div>
+
+    <div class="slider-block">
+      <label>Otter X
+        <span class="value-display" id="oxVal">0</span>
+      </label>
+      <input type="range" id="ox" min="-150" max="150" value="0" step="1">
+    </div>
+
+    <div class="slider-block">
+      <label>Otter Z
+        <span class="value-display" id="ozVal">0</span>
+      </label>
+      <input type="range" id="oz" min="-150" max="150" value="0" step="1">
+    </div>
+
+    <div class="slider-block">
+      <label>Warehouse X
+        <span class="value-display" id="wxVal">100</span>
+      </label>
+      <input type="range" id="wx" min="-200" max="200" value="100" step="1">
+    </div>
+
+    <div class="slider-block">
+      <label>Warehouse Z
+        <span class="value-display" id="wzVal">-100</span>
+      </label>
+      <input type="range" id="wz" min="-200" max="200" value="-100" step="1">
+    </div>
+
+    <h2>La matriz de rotación</h2>
+
+    <p style="font-size: 12px; opacity: 0.8; margin: 4px 0 8px 0;">
+      Para el yaw actual:
+    </p>
+
+    <div class="matrix-eq">
+      <span style="font-size: 16px;">R(yaw) =</span>
+      <div class="matrix" id="matrixR">
+        <table>
+          <tr><td id="m00">0.707</td><td id="m01">-0.707</td></tr>
+          <tr><td id="m10">0.707</td><td id="m11">0.707</td></tr>
+        </table>
+      </div>
+    </div>
+
+    <h2>Ecuación matricial completa</h2>
+
+    <p style="font-size: 12px; opacity: 0.8; margin: 4px 0 8px 0;">
+      vector_body = R(yaw) × vector_relativo_world
+    </p>
+
+    <div class="matrix-eq">
+      <div class="vec body">
+        <table>
+          <tr><td id="xBeq">141</td></tr>
+          <tr><td id="zBeq">0</td></tr>
+        </table>
+      </div>
+      <span class="op">=</span>
+      <div class="matrix">
+        <table>
+          <tr><td id="m00b">0.707</td><td id="m01b">-0.707</td></tr>
+          <tr><td id="m10b">0.707</td><td id="m11b">0.707</td></tr>
+        </table>
+      </div>
+      <span class="op">×</span>
+      <div class="vec world">
+        <table>
+          <tr><td id="dxeq">100</td></tr>
+          <tr><td id="dzeq">-100</td></tr>
+        </table>
+      </div>
+    </div>
+
+    <h2>Paso a paso: fila × columna</h2>
+
+    <div class="step row0">
+      <div class="step-label">Fila 0 × columna → x_B</div>
+      <div class="step-formula" id="step0">
+        cos(yaw)·dx + (−sin(yaw))·dz = <span class="result" id="result0">141</span>
+      </div>
+    </div>
+
+    <div class="step row1">
+      <div class="step-label">Fila 1 × columna → z_B</div>
+      <div class="step-formula" id="step1">
+        sin(yaw)·dx + cos(yaw)·dz = <span class="result" id="result1">0</span>
+      </div>
+    </div>
+
+    <h2>Presets</h2>
+    <div class="presets">
+      <button data-yaw="0"   data-ox="0" data-oz="0" data-wx="0"   data-wz="-100">yaw=0 WH norte</button>
+      <button data-yaw="90"  data-ox="0" data-oz="0" data-wx="0"   data-wz="-100">yaw=90° WH norte</button>
+      <button data-yaw="45"  data-ox="0" data-oz="0" data-wx="100" data-wz="-100">yaw=45° diagonal</button>
+      <button data-yaw="30"  data-ox="0" data-oz="0" data-wx="100" data-wz="0">yaw=30° WH este</button>
+      <button data-yaw="180" data-ox="0" data-oz="0" data-wx="100" data-wz="0">yaw=180° (invierte todo)</button>
+    </div>
+
+    <div class="note">
+      <strong>💡 Probá esto:</strong><br><br>
+      1. <strong>yaw=0</strong>: la matriz es la identidad (1 y 0). Aplicarla no cambia nada → vector body = vector world.<br><br>
+      2. <strong>yaw=90°</strong>: la matriz tiene ceros en la diagonal y 1/-1 fuera. "Intercambia" las componentes.<br><br>
+      3. Movés el <strong>yaw lentamente</strong>: las 4 celdas de la matriz oscilan suavemente entre -1 y +1, son justo sin/cos del ángulo.<br><br>
+      4. <strong>yaw=180°</strong>: la matriz tiene -1 en la diagonal. Aplicarla "invierte" el vector.
+    </div>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const canvasWrap = document.getElementById('canvas-wrap');
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xb0d0e0);
+scene.fog = new THREE.Fog(0xb0d0e0, 500, 1000);
+
+// Initial size from actual container
+const initRect = canvasWrap.getBoundingClientRect();
+const initW = Math.max(initRect.width, 320);
+const initH = Math.max(initRect.height, 320);
+
+const camera = new THREE.PerspectiveCamera(45, initW / initH, 1, 2000);
+camera.position.set(80, 350, 200);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(initW, initH);
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+canvasWrap.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(40, 5, 40);
+controls.enableDamping = true;
+controls.dampingFactor = 0.07;
+controls.update();
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+const sun = new THREE.DirectionalLight(0xffffff, 0.75);
+sun.position.set(120, 250, 80);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -250;
+sun.shadow.camera.right = 250;
+sun.shadow.camera.top = 250;
+sun.shadow.camera.bottom = -250;
+scene.add(sun);
+
+const groundGeo = new THREE.PlaneGeometry(500, 500);
+const groundMat = new THREE.MeshLambertMaterial({ color: 0x86a866 });
+const ground = new THREE.Mesh(groundGeo, groundMat);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+const grid = new THREE.GridHelper(500, 25, 0x556644, 0x778866);
+grid.position.y = 0.02;
+scene.add(grid);
+
+function makeLabel(text, color = '#222', bg = 'rgba(255,255,255,0.92)', fontSize = 28) {
+  const cv = document.createElement('canvas');
+  cv.width = 256; cv.height = 64;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(1, 1, cv.width - 2, cv.height - 2);
+  ctx.fillStyle = color;
+  ctx.font = `bold ${fontSize}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, cv.width / 2, cv.height / 2);
+  const tex = new THREE.CanvasTexture(cv);
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(36, 9, 1);
+  return sprite;
+}
+
+function makeWorldAxis(dir, color, length) {
+  const arrow = new THREE.ArrowHelper(
+    dir, new THREE.Vector3(0, 0.5, 0), length, color, 8, 5
+  );
+  arrow.line.material.transparent = true;
+  arrow.line.material.opacity = 0.3;
+  arrow.cone.material.transparent = true;
+  arrow.cone.material.opacity = 0.3;
+  scene.add(arrow);
+}
+makeWorldAxis(new THREE.Vector3(1, 0, 0), 0xff0000, 200);
+makeWorldAxis(new THREE.Vector3(0, 0, 1), 0x0044ff, 200);
+
+const lblXW = makeLabel('+X (este)', '#aa2222', 'rgba(255,230,230,0.85)', 24);
+lblXW.position.set(220, 4, 0); lblXW.scale.set(36, 9, 1); scene.add(lblXW);
+const lblZW = makeLabel('+Z (sur)', '#2244aa', 'rgba(230,230,255,0.85)', 24);
+lblZW.position.set(0, 4, 220); lblZW.scale.set(36, 9, 1); scene.add(lblZW);
+
+const otter = new THREE.Group();
+scene.add(otter);
+
+const bodyGeo = new THREE.BoxGeometry(14, 6, 22);
+const bodyMat = new THREE.MeshLambertMaterial({ color: 0x2a7a2a });
+const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
+bodyMesh.position.y = 3;
+bodyMesh.castShadow = true;
+otter.add(bodyMesh);
+
+const noseGeo = new THREE.ConeGeometry(2.5, 6, 14);
+const noseMat = new THREE.MeshLambertMaterial({ color: 0xffd11a });
+const nose = new THREE.Mesh(noseGeo, noseMat);
+nose.position.set(0, 6, 13);
+nose.rotation.x = Math.PI / 2;
+nose.castShadow = true;
+otter.add(nose);
+
+const bodyAxesGroup = new THREE.Group();
+bodyAxesGroup.position.y = 1;
+otter.add(bodyAxesGroup);
+bodyAxesGroup.add(new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(), 30, 0xff5577, 7, 4));
+bodyAxesGroup.add(new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(), 30, 0x4488ff, 7, 4));
+
+const warehouseGeo = new THREE.BoxGeometry(20, 16, 26);
+const warehouseMat = new THREE.MeshLambertMaterial({ color: 0x8a6a3a });
+const warehouse = new THREE.Mesh(warehouseGeo, warehouseMat);
+warehouse.castShadow = true;
+warehouse.position.y = 8;
+scene.add(warehouse);
+
+const whLabel = makeLabel('Warehouse', '#5a3a1a', 'rgba(255,240,200,0.95)', 22);
+whLabel.scale.set(30, 8, 1);
+scene.add(whLabel);
+
+const decompGroup = new THREE.Group();
+scene.add(decompGroup);
+
+function clearGroup(g) {
+  while (g.children.length > 0) {
+    const c = g.children[0];
+    g.remove(c);
+    if (c.geometry) c.geometry.dispose();
+    if (c.material) c.material.dispose();
+  }
+}
+
+const state = { yaw: 45, ox: 0, oz: 0, wx: 100, wz: -100 };
+
+function buildDecomposition() {
+  clearGroup(decompGroup);
+
+  const yawRad = state.yaw * Math.PI / 180;
+  const c = Math.cos(yawRad);
+  const s = Math.sin(yawRad);
+  const dx = state.wx - state.ox;
+  const dz = state.wz - state.oz;
+  const xB = dx * c - dz * s;
+  const zB = dx * s + dz * c;
+
+  const xBdir = { x: c, z: -s };
+  const zBdir = { x: s, z: c };
+  const O = { x: state.ox, y: 0.6, z: state.oz };
+  const P1 = {
+    x: O.x + xB * xBdir.x,
+    z: O.z + xB * xBdir.z,
+  };
+  const P2 = {
+    x: P1.x + zB * zBdir.x,
+    z: P1.z + zB * zBdir.z,
+  };
+
+  if (Math.abs(xB) > 1) {
+    const xPath = new THREE.LineCurve3(
+      new THREE.Vector3(O.x, O.y, O.z),
+      new THREE.Vector3(P1.x, O.y, P1.z)
+    );
+    const xTubeGeo = new THREE.TubeGeometry(xPath, 1, 1.4, 10, false);
+    decompGroup.add(new THREE.Mesh(xTubeGeo, new THREE.MeshBasicMaterial({ color: 0xff3333 })));
+  }
+  if (Math.abs(zB) > 1) {
+    const zPath = new THREE.LineCurve3(
+      new THREE.Vector3(P1.x, O.y, P1.z),
+      new THREE.Vector3(P2.x, O.y, P2.z)
+    );
+    const zTubeGeo = new THREE.TubeGeometry(zPath, 1, 1.4, 10, false);
+    decompGroup.add(new THREE.Mesh(zTubeGeo, new THREE.MeshBasicMaterial({ color: 0x2266ff })));
+  }
+
+  const relGeo = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(O.x, O.y + 0.5, O.z),
+    new THREE.Vector3(state.wx, O.y + 0.5, state.wz),
+  ]);
+  const relMat = new THREE.LineDashedMaterial({
+    color: 0xff9900, dashSize: 5, gapSize: 3
+  });
+  const relLine = new THREE.Line(relGeo, relMat);
+  relLine.computeLineDistances();
+  decompGroup.add(relLine);
+}
+
+function updateScene() {
+  otter.position.set(state.ox, 0, state.oz);
+  otter.rotation.y = state.yaw * Math.PI / 180;
+  warehouse.position.set(state.wx, 8, state.wz);
+  whLabel.position.set(state.wx, 24, state.wz);
+
+  const yawRad = state.yaw * Math.PI / 180;
+  const c = Math.cos(yawRad);
+  const s = Math.sin(yawRad);
+  const dx = state.wx - state.ox;
+  const dz = state.wz - state.oz;
+  const xB = dx * c - dz * s;
+  const zB = dx * s + dz * c;
+
+  // Matrix cells (two copies — show same matrix twice)
+  const setCell = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = val.toFixed(3);
+  };
+  setCell('m00', c);   setCell('m01', -s);
+  setCell('m10', s);   setCell('m11', c);
+  setCell('m00b', c);  setCell('m01b', -s);
+  setCell('m10b', s);  setCell('m11b', c);
+
+  // Vector cells
+  document.getElementById('dxeq').textContent = dx.toFixed(0);
+  document.getElementById('dzeq').textContent = dz.toFixed(0);
+  document.getElementById('xBeq').textContent = xB.toFixed(1);
+  document.getElementById('zBeq').textContent = zB.toFixed(1);
+
+  // Step-by-step with concrete numbers
+  document.getElementById('step0').innerHTML =
+    `(${c.toFixed(3)})·(${dx}) + (${(-s).toFixed(3)})·(${dz}) = <span class="result">${xB.toFixed(1)}</span>`;
+  document.getElementById('step1').innerHTML =
+    `(${s.toFixed(3)})·(${dx}) + (${c.toFixed(3)})·(${dz}) = <span class="result">${zB.toFixed(1)}</span>`;
+
+  buildDecomposition();
+}
+
+function bindSlider(id, key, displayId, suffix = '') {
+  const slider = document.getElementById(id);
+  const display = document.getElementById(displayId);
+  slider.addEventListener('input', () => {
+    state[key] = parseFloat(slider.value);
+    display.textContent = state[key] + suffix;
+    updateScene();
+  });
+}
+
+bindSlider('yaw', 'yaw', 'yawVal', '°');
+bindSlider('ox', 'ox', 'oxVal');
+bindSlider('oz', 'oz', 'ozVal');
+bindSlider('wx', 'wx', 'wxVal');
+bindSlider('wz', 'wz', 'wzVal');
+
+document.querySelectorAll('.presets button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    ['yaw', 'ox', 'oz', 'wx', 'wz'].forEach(key => {
+      state[key] = parseFloat(btn.dataset[key]);
+      const slider = document.getElementById(key);
+      slider.value = state[key];
+      const display = document.getElementById(key + 'Val');
+      display.textContent = state[key] + (key === 'yaw' ? '°' : '');
+    });
+    updateScene();
+  });
+});
+
+function resizeRenderer() {
+  const rect = canvasWrap.getBoundingClientRect();
+  const w = Math.max(rect.width, 320);
+  const h = Math.max(rect.height, 320);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h, false);
+}
+window.addEventListener('resize', resizeRenderer);
+
+// Also react to flex/layout changes (e.g. panel toggling between row and column)
+const ro = new ResizeObserver(resizeRenderer);
+ro.observe(canvasWrap);
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+updateScene();
+animate();
+</script>
+
+</body>
+</html>

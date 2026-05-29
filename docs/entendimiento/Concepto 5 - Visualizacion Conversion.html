@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Visualización 3D: Conversión world ↔ body</title>
+<style>
+  body {
+    margin: 0;
+    font-family: -apple-system, system-ui, sans-serif;
+    background: #1a1a2e;
+    color: #eaeaea;
+    overflow: hidden;
+  }
+  #container { display: flex; height: 100vh; }
+  #canvas-wrap { flex: 1; position: relative; }
+  canvas { display: block; }
+  #panel {
+    width: 380px;
+    padding: 16px 20px;
+    background: #0f0f1a;
+    overflow-y: auto;
+    box-shadow: -2px 0 10px rgba(0,0,0,0.3);
+  }
+  #panel h1 {
+    font-size: 18px;
+    margin: 0 0 4px 0;
+    color: #ffe066;
+  }
+  #panel h2 {
+    font-size: 12px;
+    margin: 18px 0 6px 0;
+    color: #ffe066;
+    opacity: 0.85;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border-bottom: 1px solid rgba(255,224,102,0.2);
+    padding-bottom: 4px;
+  }
+  .slider-block { margin: 10px 0; }
+  .slider-block label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    margin-bottom: 4px;
+  }
+  .slider-block input[type=range] { width: 100%; cursor: pointer; }
+  .value-display { font-family: monospace; color: #ffe066; }
+
+  .display-block {
+    margin: 8px 0;
+    padding: 10px 12px;
+    background: #1a1a2e;
+    border-radius: 4px;
+    border-left: 3px solid;
+  }
+  .display-block.world  { border-color: #ff9900; }
+  .display-block.rel    { border-color: #aaaaaa; }
+  .display-block.body   { border-color: #4ecdc4; }
+  .display-label {
+    font-size: 10px;
+    opacity: 0.75;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .display-value {
+    font-family: monospace;
+    font-size: 17px;
+    font-weight: bold;
+  }
+  .display-block.world  .display-value { color: #ffaa44; }
+  .display-block.rel    .display-value { color: #cccccc; }
+  .display-block.body   .display-value { color: #66ddd4; }
+  .display-formula {
+    font-family: monospace;
+    font-size: 11px;
+    opacity: 0.65;
+    margin-top: 4px;
+  }
+
+  .presets { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+  .presets button {
+    background: #ffe066;
+    color: #1a1a2e;
+    border: none;
+    padding: 7px 11px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: bold;
+  }
+  .presets button:hover { background: #ffd93d; }
+  .note {
+    font-size: 11px;
+    opacity: 0.75;
+    margin-top: 14px;
+    padding: 10px;
+    background: rgba(255,255,255,0.04);
+    border-radius: 4px;
+    line-height: 1.5;
+  }
+  .legend {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    background: rgba(15,15,26,0.88);
+    padding: 10px 14px;
+    border-radius: 6px;
+    font-size: 12px;
+    color: #eaeaea;
+    border: 1px solid rgba(255,224,102,0.3);
+    max-width: 280px;
+  }
+  .legend-title { margin-bottom: 8px; font-weight: bold; color: #ffe066; }
+  .legend-row { margin: 3px 0; display: flex; align-items: center; gap: 8px; }
+  .legend-color { width: 18px; height: 4px; border-radius: 2px; }
+  .legend-help {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(255,255,255,0.1);
+    font-size: 11px;
+    opacity: 0.8;
+    line-height: 1.5;
+  }
+</style>
+</head>
+<body>
+
+<div id="container">
+  <div id="canvas-wrap">
+    <div class="legend">
+      <div class="legend-title">Vectores en la escena</div>
+      <div class="legend-row">
+        <span class="legend-color" style="background:#ff9900"></span>
+        <span>Naranja punteada = vector relativo en world (dx, dz)</span>
+      </div>
+      <div class="legend-row">
+        <span class="legend-color" style="background:#ff3333"></span>
+        <span>Rojo = componente <strong>x_B</strong> (en eje X_B del Otter)</span>
+      </div>
+      <div class="legend-row">
+        <span class="legend-color" style="background:#2266ff"></span>
+        <span>Azul = componente <strong>z_B</strong> (en eje Z_B del Otter)</span>
+      </div>
+      <div class="legend-help">
+        🖱️ Arrastrar = orbitar<br>
+        🖱️ Scroll = zoom<br><br>
+        💡 Los dos catetos (rojo + azul) suman vectorialmente para llegar de Otter a warehouse. Pero están alineados con los ejes del <strong>body</strong>, no del world.
+      </div>
+    </div>
+  </div>
+
+  <div id="panel">
+    <h1>Conversión world ↔ body</h1>
+    <p style="font-size: 12px; opacity: 0.7; margin: 0;">Concepto 5 — visualización 3D</p>
+
+    <h2>Otter</h2>
+
+    <div class="slider-block">
+      <label>Yaw
+        <span class="value-display" id="yawVal">45°</span>
+      </label>
+      <input type="range" id="yaw" min="-180" max="180" value="45" step="1">
+    </div>
+
+    <div class="slider-block">
+      <label>Posición X
+        <span class="value-display" id="oxVal">0</span>
+      </label>
+      <input type="range" id="ox" min="-150" max="150" value="0" step="1">
+    </div>
+
+    <div class="slider-block">
+      <label>Posición Z
+        <span class="value-display" id="ozVal">0</span>
+      </label>
+      <input type="range" id="oz" min="-150" max="150" value="0" step="1">
+    </div>
+
+    <h2>Warehouse</h2>
+
+    <div class="slider-block">
+      <label>Posición X
+        <span class="value-display" id="wxVal">100</span>
+      </label>
+      <input type="range" id="wx" min="-200" max="200" value="100" step="1">
+    </div>
+
+    <div class="slider-block">
+      <label>Posición Z
+        <span class="value-display" id="wzVal">-100</span>
+      </label>
+      <input type="range" id="wz" min="-200" max="200" value="-100" step="1">
+    </div>
+
+    <h2>Posiciones en el mapa (world)</h2>
+
+    <div class="display-block world">
+      <div class="display-label">Otter (mundo)</div>
+      <div class="display-value" id="otterW">(0, 0)<sub>W</sub></div>
+    </div>
+
+    <div class="display-block world">
+      <div class="display-label">Warehouse (mundo)</div>
+      <div class="display-value" id="whW">(100, -100)<sub>W</sub></div>
+    </div>
+
+    <h2>Paso A: vector relativo (en world)</h2>
+
+    <div class="display-block rel">
+      <div class="display-label">dx, dz = warehouse − otter</div>
+      <div class="display-value" id="relW">(100, -100)</div>
+      <div class="display-formula" id="relFormula">dx = 100−0 = 100&nbsp;&nbsp;dz = -100−0 = -100</div>
+    </div>
+
+    <h2>Paso B: rotación → body frame</h2>
+
+    <div class="display-block body">
+      <div class="display-label">x_B = dx·cos(yaw) − dz·sin(yaw)</div>
+      <div class="display-value" id="xBVal">141</div>
+      <div class="display-formula" id="xBFormula">= 100·0.707 − (-100)·0.707 = 141.4</div>
+    </div>
+
+    <div class="display-block body">
+      <div class="display-label">z_B = dx·sin(yaw) + dz·cos(yaw)</div>
+      <div class="display-value" id="zBVal">0</div>
+      <div class="display-formula" id="zBFormula">= 100·0.707 + (-100)·0.707 = 0</div>
+    </div>
+
+    <div class="display-block body">
+      <div class="display-label">Warehouse vista desde el Otter (body)</div>
+      <div class="display-value" id="whB">(141, 0)<sub>B</sub></div>
+    </div>
+
+    <h2>Presets</h2>
+    <div class="presets">
+      <button data-yaw="0"   data-ox="0"  data-oz="0"  data-wx="0"   data-wz="-100">Caso 1: yaw=0, WH norte</button>
+      <button data-yaw="90"  data-ox="0"  data-oz="0"  data-wx="0"   data-wz="-100">Caso 2: yaw=90°, WH norte</button>
+      <button data-yaw="45"  data-ox="50" data-oz="30" data-wx="200" data-wz="-70">Ejemplo del doc</button>
+      <button data-yaw="0"   data-ox="0"  data-oz="0"  data-wx="100" data-wz="0">WH al este</button>
+      <button data-yaw="45"  data-ox="0"  data-oz="0"  data-wx="100" data-wz="-100">Diagonal</button>
+    </div>
+
+    <div class="note">
+      <strong>💡 Probá esto:</strong><br><br>
+      1. Empezá con <strong>Caso 1</strong> (yaw=0, WH al norte). Notá: world = (0,-100), body = (0,-100). Coinciden porque el Otter está alineado.<br><br>
+      2. Cambiá a <strong>Caso 2</strong> (yaw=90°). Mismo Otter, misma warehouse en world (0,-100). Pero en body es (100, 0). El triángulo rojo/azul rotó con el Otter.<br><br>
+      3. Mové solo el <strong>yaw</strong> dejando todo lo demás quieto. Los números world no cambian, los body sí.<br><br>
+      4. Mové solo la <strong>posición del Otter</strong>. El triángulo se traslada pero NO rota.
+    </div>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const canvasWrap = document.getElementById('canvas-wrap');
+
+// Scene
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xb0d0e0);
+scene.fog = new THREE.Fog(0xb0d0e0, 500, 1000);
+
+const camera = new THREE.PerspectiveCamera(
+  45,
+  (window.innerWidth - 380) / window.innerHeight,
+  1,
+  2000
+);
+camera.position.set(80, 350, 200);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth - 380, window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+canvasWrap.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(40, 5, 40);
+controls.enableDamping = true;
+controls.dampingFactor = 0.07;
+controls.update();
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+const sun = new THREE.DirectionalLight(0xffffff, 0.75);
+sun.position.set(120, 250, 80);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -250;
+sun.shadow.camera.right = 250;
+sun.shadow.camera.top = 250;
+sun.shadow.camera.bottom = -250;
+scene.add(sun);
+
+const groundGeo = new THREE.PlaneGeometry(500, 500);
+const groundMat = new THREE.MeshLambertMaterial({ color: 0x86a866 });
+const ground = new THREE.Mesh(groundGeo, groundMat);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+const grid = new THREE.GridHelper(500, 25, 0x556644, 0x778866);
+grid.position.y = 0.02;
+scene.add(grid);
+
+function makeLabel(text, color = '#222', bg = 'rgba(255,255,255,0.92)', fontSize = 30) {
+  const cv = document.createElement('canvas');
+  cv.width = 256; cv.height = 64;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(1, 1, cv.width - 2, cv.height - 2);
+  ctx.fillStyle = color;
+  ctx.font = `bold ${fontSize}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, cv.width / 2, cv.height / 2);
+  const tex = new THREE.CanvasTexture(cv);
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(36, 9, 1);
+  return sprite;
+}
+
+function makeWorldAxis(dir, color, length) {
+  const arrow = new THREE.ArrowHelper(
+    dir, new THREE.Vector3(0, 0.5, 0), length, color, 8, 5
+  );
+  arrow.line.material.transparent = true;
+  arrow.line.material.opacity = 0.3;
+  arrow.cone.material.transparent = true;
+  arrow.cone.material.opacity = 0.3;
+  scene.add(arrow);
+}
+makeWorldAxis(new THREE.Vector3(1, 0, 0), 0xff0000, 200);
+makeWorldAxis(new THREE.Vector3(0, 0, 1), 0x0044ff, 200);
+
+const lblXW = makeLabel('+X (este)', '#aa2222', 'rgba(255,230,230,0.85)', 24);
+lblXW.position.set(220, 4, 0); lblXW.scale.set(36, 9, 1); scene.add(lblXW);
+const lblZW = makeLabel('+Z (sur)', '#2244aa', 'rgba(230,230,255,0.85)', 24);
+lblZW.position.set(0, 4, 220); lblZW.scale.set(36, 9, 1); scene.add(lblZW);
+
+// Otter group (with body axes attached)
+const otter = new THREE.Group();
+scene.add(otter);
+
+const bodyGeo = new THREE.BoxGeometry(14, 6, 22);
+const bodyMat = new THREE.MeshLambertMaterial({ color: 0x2a7a2a });
+const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
+bodyMesh.position.y = 3;
+bodyMesh.castShadow = true;
+otter.add(bodyMesh);
+
+const noseGeo = new THREE.ConeGeometry(2.5, 6, 14);
+const noseMat = new THREE.MeshLambertMaterial({ color: 0xffd11a });
+const nose = new THREE.Mesh(noseGeo, noseMat);
+nose.position.set(0, 6, 13);
+nose.rotation.x = Math.PI / 2;
+nose.castShadow = true;
+otter.add(nose);
+
+// Body axes attached to Otter (rotate with it)
+const bodyAxesGroup = new THREE.Group();
+bodyAxesGroup.position.y = 1;
+otter.add(bodyAxesGroup);
+
+function makeBodyAxis(dir, color) {
+  return new THREE.ArrowHelper(
+    dir, new THREE.Vector3(), 30, color, 7, 4
+  );
+}
+bodyAxesGroup.add(makeBodyAxis(new THREE.Vector3(1, 0, 0), 0xff5577)); // X_B
+bodyAxesGroup.add(makeBodyAxis(new THREE.Vector3(0, 0, 1), 0x4488ff)); // Z_B
+
+// Otter label
+const otterLabel = makeLabel('Otter', '#1a4a1a', 'rgba(220,255,220,0.95)', 24);
+otterLabel.scale.set(20, 7, 1);
+scene.add(otterLabel);
+
+// Warehouse
+const warehouseGeo = new THREE.BoxGeometry(20, 16, 26);
+const warehouseMat = new THREE.MeshLambertMaterial({ color: 0x8a6a3a });
+const warehouse = new THREE.Mesh(warehouseGeo, warehouseMat);
+warehouse.castShadow = true;
+warehouse.receiveShadow = true;
+warehouse.position.y = 8;
+scene.add(warehouse);
+
+const whLabel = makeLabel('Warehouse', '#5a3a1a', 'rgba(255,240,200,0.95)', 22);
+whLabel.scale.set(30, 8, 1);
+scene.add(whLabel);
+
+// Decomposition group (rebuilt every frame)
+const decompGroup = new THREE.Group();
+scene.add(decompGroup);
+
+function clearGroup(g) {
+  while (g.children.length > 0) {
+    const c = g.children[0];
+    g.remove(c);
+    if (c.geometry) c.geometry.dispose();
+    if (c.material) c.material.dispose();
+  }
+}
+
+const state = { yaw: 45, ox: 0, oz: 0, wx: 100, wz: -100 };
+
+function buildDecomposition() {
+  clearGroup(decompGroup);
+
+  const yawRad = state.yaw * Math.PI / 180;
+  const c = Math.cos(yawRad);
+  const s = Math.sin(yawRad);
+
+  // Vector relativo en world
+  const dx = state.wx - state.ox;
+  const dz = state.wz - state.oz;
+
+  // Componentes body
+  const xB = dx * c - dz * s;
+  const zB = dx * s + dz * c;
+
+  // Direcciones de los ejes body en world coords
+  // X_B en world: (cos, -sin), Z_B en world: (sin, cos)
+  const xBdir = { x: c, z: -s };
+  const zBdir = { x: s, z: c };
+
+  // Origen: posición del Otter
+  const O = { x: state.ox, y: 0.6, z: state.oz };
+
+  // Punto intermedio: Otter + xB * X_B
+  const P1 = {
+    x: O.x + xB * xBdir.x,
+    y: O.y,
+    z: O.z + xB * xBdir.z,
+  };
+
+  // Punto final: P1 + zB * Z_B (debería ser la warehouse)
+  const P2 = {
+    x: P1.x + zB * zBdir.x,
+    y: O.y,
+    z: P1.z + zB * zBdir.z,
+  };
+
+  // Tubo para componente X_B (rojo)
+  if (Math.abs(xB) > 1) {
+    const xPath = new THREE.LineCurve3(
+      new THREE.Vector3(O.x, O.y, O.z),
+      new THREE.Vector3(P1.x, O.y, P1.z)
+    );
+    const xTubeGeo = new THREE.TubeGeometry(xPath, 1, 1.6, 10, false);
+    const xTubeMat = new THREE.MeshBasicMaterial({ color: 0xff3333 });
+    decompGroup.add(new THREE.Mesh(xTubeGeo, xTubeMat));
+  }
+
+  // Tubo para componente Z_B (azul)
+  if (Math.abs(zB) > 1) {
+    const zPath = new THREE.LineCurve3(
+      new THREE.Vector3(P1.x, O.y, P1.z),
+      new THREE.Vector3(P2.x, O.y, P2.z)
+    );
+    const zTubeGeo = new THREE.TubeGeometry(zPath, 1, 1.6, 10, false);
+    const zTubeMat = new THREE.MeshBasicMaterial({ color: 0x2266ff });
+    decompGroup.add(new THREE.Mesh(zTubeGeo, zTubeMat));
+  }
+
+  // Vector relativo en world (naranja punteado), desde Otter a Warehouse
+  const relGeo = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(O.x, O.y + 0.5, O.z),
+    new THREE.Vector3(state.wx, O.y + 0.5, state.wz),
+  ]);
+  const relMat = new THREE.LineDashedMaterial({
+    color: 0xff9900, dashSize: 5, gapSize: 3
+  });
+  const relLine = new THREE.Line(relGeo, relMat);
+  relLine.computeLineDistances();
+  decompGroup.add(relLine);
+
+  // Etiqueta de la componente xB sobre el cateto rojo
+  const lblxB = makeLabel(`x_B = ${xB.toFixed(0)}`, '#cc1111', 'rgba(255,220,220,0.95)', 22);
+  lblxB.position.set((O.x + P1.x) / 2, 10, (O.z + P1.z) / 2);
+  lblxB.scale.set(28, 7, 1);
+  if (Math.abs(xB) > 15) decompGroup.add(lblxB);
+
+  // Etiqueta de la componente zB sobre el cateto azul
+  const lblzB = makeLabel(`z_B = ${zB.toFixed(0)}`, '#1144cc', 'rgba(220,230,255,0.95)', 22);
+  lblzB.position.set((P1.x + P2.x) / 2, 10, (P1.z + P2.z) / 2);
+  lblzB.scale.set(28, 7, 1);
+  if (Math.abs(zB) > 15) decompGroup.add(lblzB);
+}
+
+function updateScene() {
+  otter.position.set(state.ox, 0, state.oz);
+  otter.rotation.y = state.yaw * Math.PI / 180;
+  otterLabel.position.set(state.ox + 14, 14, state.oz);
+
+  warehouse.position.set(state.wx, 8, state.wz);
+  whLabel.position.set(state.wx, 24, state.wz);
+
+  const yawRad = state.yaw * Math.PI / 180;
+  const c = Math.cos(yawRad);
+  const s = Math.sin(yawRad);
+  const dx = state.wx - state.ox;
+  const dz = state.wz - state.oz;
+  const xB = dx * c - dz * s;
+  const zB = dx * s + dz * c;
+
+  // Panel updates
+  document.getElementById('otterW').innerHTML =
+    `(${state.ox}, ${state.oz})<sub>W</sub>`;
+  document.getElementById('whW').innerHTML =
+    `(${state.wx}, ${state.wz})<sub>W</sub>`;
+  document.getElementById('relW').textContent = `(${dx}, ${dz})`;
+  document.getElementById('relFormula').textContent =
+    `dx = ${state.wx} − ${state.ox} = ${dx}    dz = ${state.wz} − ${state.oz} = ${dz}`;
+  document.getElementById('xBVal').textContent = xB.toFixed(1);
+  document.getElementById('xBFormula').textContent =
+    `= ${dx}·${c.toFixed(3)} − (${dz})·${s.toFixed(3)} = ${xB.toFixed(1)}`;
+  document.getElementById('zBVal').textContent = zB.toFixed(1);
+  document.getElementById('zBFormula').textContent =
+    `= ${dx}·${s.toFixed(3)} + (${dz})·${c.toFixed(3)} = ${zB.toFixed(1)}`;
+  document.getElementById('whB').innerHTML =
+    `(${xB.toFixed(0)}, ${zB.toFixed(0)})<sub>B</sub>`;
+
+  buildDecomposition();
+}
+
+function bindSlider(id, key, displayId, suffix = '') {
+  const slider = document.getElementById(id);
+  const display = document.getElementById(displayId);
+  slider.addEventListener('input', () => {
+    state[key] = parseFloat(slider.value);
+    display.textContent = state[key] + suffix;
+    updateScene();
+  });
+}
+
+bindSlider('yaw', 'yaw', 'yawVal', '°');
+bindSlider('ox', 'ox', 'oxVal');
+bindSlider('oz', 'oz', 'ozVal');
+bindSlider('wx', 'wx', 'wxVal');
+bindSlider('wz', 'wz', 'wzVal');
+
+document.querySelectorAll('.presets button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    ['yaw', 'ox', 'oz', 'wx', 'wz'].forEach(key => {
+      state[key] = parseFloat(btn.dataset[key]);
+      const slider = document.getElementById(key);
+      slider.value = state[key];
+      const display = document.getElementById(key + 'Val');
+      display.textContent = state[key] + (key === 'yaw' ? '°' : '');
+    });
+    updateScene();
+  });
+});
+
+window.addEventListener('resize', () => {
+  const w = window.innerWidth - 380;
+  camera.aspect = w / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, window.innerHeight);
+});
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+updateScene();
+animate();
+</script>
+
+</body>
+</html>

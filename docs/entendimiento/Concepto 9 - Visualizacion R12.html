@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Visualización 3D: R[12] del simulador</title>
+<style>
+  body {
+    margin: 0;
+    font-family: -apple-system, system-ui, sans-serif;
+    background: #1a1a2e;
+    color: #eaeaea;
+    overflow: hidden;
+    height: 100vh;
+  }
+  #container { display: flex; height: 100vh; width: 100vw; }
+  #canvas-wrap { flex: 1 1 auto; position: relative; min-width: 0; min-height: 0; }
+  canvas { display: block; }
+  #panel {
+    flex: 0 0 460px;
+    padding: 16px 20px;
+    background: #0f0f1a;
+    overflow-y: auto;
+    overflow-x: hidden;
+    box-shadow: -2px 0 10px rgba(0,0,0,0.3);
+    box-sizing: border-box;
+  }
+  @media (max-width: 900px) {
+    body { overflow: auto; }
+    #container { flex-direction: column; height: auto; min-height: 100vh; }
+    #canvas-wrap { height: 50vh; min-height: 400px; flex: 0 0 auto; }
+    #panel { flex: 1 1 auto; width: 100%; max-width: 100%; }
+  }
+
+  h1 { font-size: 18px; margin: 0 0 4px 0; color: #ffe066; }
+  h2 {
+    font-size: 12px;
+    margin: 16px 0 6px 0;
+    color: #ffe066;
+    opacity: 0.85;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border-bottom: 1px solid rgba(255,224,102,0.2);
+    padding-bottom: 4px;
+  }
+
+  .slider-block { margin: 8px 0; }
+  .slider-block label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    margin-bottom: 4px;
+  }
+  .slider-block input[type=range] { width: 100%; cursor: pointer; }
+  .value-display { font-family: monospace; color: #ffe066; }
+
+  /* R[12] array display */
+  .r12-array {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px;
+    margin: 10px 0;
+    font-family: monospace;
+  }
+  .r12-cell {
+    background: #1a1a2e;
+    border: 2px solid #4ecdc4;
+    border-radius: 4px;
+    padding: 6px 2px;
+    text-align: center;
+    font-size: 13px;
+  }
+  .r12-cell.padding {
+    border-color: #ff5555;
+    background: rgba(255, 80, 80, 0.12);
+    opacity: 0.7;
+  }
+  .r12-cell .idx {
+    font-size: 9px;
+    opacity: 0.6;
+    text-transform: uppercase;
+  }
+  .r12-cell .val {
+    font-weight: bold;
+    color: #66ddd4;
+    margin-top: 1px;
+  }
+  .r12-cell.padding .val { color: #ff8080; }
+
+  .r12-row-label {
+    grid-column: 1 / -1;
+    font-size: 10px;
+    color: #888;
+    margin-top: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  /* Matrix display */
+  .matrix {
+    display: inline-block;
+    position: relative;
+    padding: 4px 8px;
+    font-family: monospace;
+    margin: 8px 0;
+  }
+  .matrix::before, .matrix::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 5px;
+    border: 2px solid #ffe066;
+  }
+  .matrix::before { left: 0; border-right: none; }
+  .matrix::after { right: 0; border-left: none; }
+  .matrix table { border-collapse: collapse; }
+  .matrix td {
+    padding: 4px 8px;
+    text-align: center;
+    font-size: 13px;
+    min-width: 50px;
+    color: #ffe066;
+  }
+
+  /* Quaternion display */
+  .quat-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+    margin: 8px 0;
+  }
+  .quat-cell {
+    background: #1a1a2e;
+    border: 2px solid #cc88ff;
+    border-radius: 4px;
+    padding: 8px 4px;
+    text-align: center;
+  }
+  .quat-cell .label {
+    font-size: 10px;
+    opacity: 0.7;
+    text-transform: uppercase;
+  }
+  .quat-cell .value {
+    font-family: monospace;
+    font-size: 15px;
+    font-weight: bold;
+    color: #d4aaff;
+    margin-top: 2px;
+  }
+
+  .pipeline {
+    margin: 10px 0;
+    font-family: monospace;
+    font-size: 11px;
+    line-height: 1.8;
+    background: #1a1a2e;
+    padding: 10px;
+    border-radius: 4px;
+    border-left: 3px solid #ffe066;
+  }
+  .pipeline .arrow {
+    color: #888;
+    margin: 0 6px;
+  }
+  .pipeline .step {
+    color: #66ddd4;
+  }
+
+  .corrupt-banner {
+    margin: 10px 0;
+    padding: 10px;
+    background: rgba(255, 100, 100, 0.12);
+    border: 1px dashed #ff5555;
+    border-radius: 4px;
+    color: #ff8888;
+    font-size: 11px;
+    text-align: center;
+    display: none;
+  }
+  .corrupt-banner.active { display: block; }
+
+  .presets { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+  .presets button {
+    background: #ffe066;
+    color: #1a1a2e;
+    border: none;
+    padding: 7px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: bold;
+  }
+  .presets button:hover { background: #ffd93d; }
+  .presets button.danger {
+    background: #ff7755;
+    color: white;
+  }
+  .note {
+    font-size: 11px;
+    opacity: 0.75;
+    margin-top: 14px;
+    padding: 10px;
+    background: rgba(255,255,255,0.04);
+    border-radius: 4px;
+    line-height: 1.5;
+  }
+  .legend {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    background: rgba(15,15,26,0.88);
+    padding: 10px 14px;
+    border-radius: 6px;
+    font-size: 11px;
+    color: #eaeaea;
+    border: 1px solid rgba(255,224,102,0.3);
+    max-width: 280px;
+  }
+  .legend-title { margin-bottom: 6px; font-weight: bold; color: #ffe066; font-size: 13px; }
+</style>
+</head>
+<body>
+
+<div id="container">
+  <div id="canvas-wrap">
+    <div class="legend">
+      <div class="legend-title">Pipeline en vivo</div>
+      <div style="font-size: 11px; opacity: 0.85; line-height: 1.6;">
+        Movés los sliders (yaw, pitch, roll) y el panel derecho te muestra <strong>todo lo que pasa adentro del agente</strong>:<br>
+        sliders → matriz 3×3 → R[12] que llegaría por UDP → cuaternión para la red neural.
+      </div>
+    </div>
+  </div>
+
+  <div id="panel">
+    <h1>R[12] — el cierre</h1>
+    <p style="font-size: 12px; opacity: 0.7; margin: 0;">Concepto 9 — visualización 3D</p>
+
+    <h2>Orientación de entrada</h2>
+
+    <div class="slider-block">
+      <label>Yaw
+        <span class="value-display" id="yawVal">0°</span>
+      </label>
+      <input type="range" id="yaw" min="-180" max="180" value="0" step="1">
+    </div>
+    <div class="slider-block">
+      <label>Pitch
+        <span class="value-display" id="pitchVal">0°</span>
+      </label>
+      <input type="range" id="pitch" min="-90" max="90" value="0" step="1">
+    </div>
+    <div class="slider-block">
+      <label>Roll
+        <span class="value-display" id="rollVal">0°</span>
+      </label>
+      <input type="range" id="roll" min="-180" max="180" value="0" step="1">
+    </div>
+
+    <h2>📦 R[12] tal como llega por UDP</h2>
+    <p style="font-size: 11px; opacity: 0.7; margin: 4px 0 8px 0;">
+      12 floats en este orden. Los <span style="color: #ff8080">índices 3, 7, 11 son padding</span> (basura, ignorar).
+    </p>
+
+    <div class="r12-array" id="r12Array">
+      <!-- Filled dynamically -->
+    </div>
+
+    <div class="corrupt-banner" id="corruptBanner">
+      ⚠️ Padding alterado a valores random. <strong>La rotación sigue siendo la misma</strong>: el padding no afecta nada.
+    </div>
+
+    <h2>Paso 1: reconstruir la matriz 3×3</h2>
+    <p style="font-size: 11px; opacity: 0.7; margin: 4px 0 6px 0;">
+      <code>R[0,1,2] / R[4,5,6] / R[8,9,10]</code> — saltando los padding.
+    </p>
+
+    <div class="matrix">
+      <table>
+        <tr>
+          <td id="m00">1.00</td><td id="m01">0.00</td><td id="m02">0.00</td>
+        </tr>
+        <tr>
+          <td id="m10">0.00</td><td id="m11">1.00</td><td id="m12">0.00</td>
+        </tr>
+        <tr>
+          <td id="m20">0.00</td><td id="m21">0.00</td><td id="m22">1.00</td>
+        </tr>
+      </table>
+    </div>
+
+    <h2>Paso 2: convertir a cuaternión</h2>
+    <p style="font-size: 11px; opacity: 0.7; margin: 4px 0 6px 0;">
+      <code>scipy.spatial.transform.Rotation.from_matrix(R).as_quat()</code>
+      <br>(canonicalizado para que w ≥ 0)
+    </p>
+
+    <div class="quat-grid">
+      <div class="quat-cell"><div class="label">w</div><div class="value" id="qw">1.000</div></div>
+      <div class="quat-cell"><div class="label">x</div><div class="value" id="qx">0.000</div></div>
+      <div class="quat-cell"><div class="label">y</div><div class="value" id="qy">0.000</div></div>
+      <div class="quat-cell"><div class="label">z</div><div class="value" id="qz">0.000</div></div>
+    </div>
+
+    <h2>Pipeline completo</h2>
+
+    <div class="pipeline">
+      <span class="step">UDP packet</span><span class="arrow">→</span>
+      <span class="step">R[12]</span><span class="arrow">→</span><br>
+      <span class="step">matriz 3×3</span><span class="arrow">→</span>
+      <span class="step">cuaternión</span><span class="arrow">→</span>
+      <span class="step">canonicalizar</span><br><span class="arrow">→</span>
+      <span class="step">input de la red neural</span>
+    </div>
+
+    <h2>Acciones</h2>
+    <div class="presets">
+      <button data-yaw="0" data-pitch="0" data-roll="0">Identidad</button>
+      <button data-yaw="90" data-pitch="0" data-roll="0">Yaw 90°</button>
+      <button data-yaw="0" data-pitch="90" data-roll="0">Pitch 90° (gimbal lock en Euler)</button>
+      <button data-yaw="30" data-pitch="20" data-roll="15">Combinado</button>
+      <button class="danger" id="corruptBtn">⚠️ Alterar padding (demo)</button>
+    </div>
+
+    <div class="note">
+      <strong>💡 La cosa que tenés que comprobar:</strong><br><br>
+      Apretá <strong>"⚠️ Alterar padding"</strong>. Vas a ver:<br>
+      • Los 3 floats rojos (índices 3, 7, 11) cambian a valores aleatorios.<br>
+      • <strong>El Otter NO se mueve</strong>. La matriz 3×3 NO cambia. El cuaternión NO cambia.<br><br>
+      Eso prueba que el padding es <strong>realmente basura ignorada</strong>. El error clásico sería leer R[3] como si fuera la entrada (0,3) de la matriz — ahí sí explotaría todo.
+    </div>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const canvasWrap = document.getElementById('canvas-wrap');
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xb0d0e0);
+
+const initRect = canvasWrap.getBoundingClientRect();
+const initW = Math.max(initRect.width, 320);
+const initH = Math.max(initRect.height, 320);
+
+const camera = new THREE.PerspectiveCamera(45, initW / initH, 0.5, 2000);
+camera.position.set(130, 110, 130);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(initW, initH);
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+canvasWrap.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.07;
+controls.update();
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+const sun = new THREE.DirectionalLight(0xffffff, 0.7);
+sun.position.set(120, 250, 80);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+scene.add(sun);
+
+const groundGeo = new THREE.PlaneGeometry(400, 400);
+const groundMat = new THREE.MeshLambertMaterial({
+  color: 0x86a866, transparent: true, opacity: 0.5,
+});
+const ground = new THREE.Mesh(groundGeo, groundMat);
+ground.rotation.x = -Math.PI / 2;
+ground.position.y = -50;
+ground.receiveShadow = true;
+scene.add(ground);
+
+function makeWorldAxis(dir, color, length) {
+  const arrow = new THREE.ArrowHelper(dir, new THREE.Vector3(), length, color, 6, 4);
+  arrow.line.material.transparent = true;
+  arrow.line.material.opacity = 0.35;
+  arrow.cone.material.transparent = true;
+  arrow.cone.material.opacity = 0.35;
+  scene.add(arrow);
+}
+makeWorldAxis(new THREE.Vector3(1, 0, 0), 0xff0000, 70);
+makeWorldAxis(new THREE.Vector3(0, 1, 0), 0x00cc00, 70);
+makeWorldAxis(new THREE.Vector3(0, 0, 1), 0x0044ff, 70);
+
+// Otter
+const otter = new THREE.Group();
+scene.add(otter);
+otter.add(new THREE.Mesh(
+  new THREE.BoxGeometry(14, 6, 22),
+  new THREE.MeshLambertMaterial({ color: 0x2a7a2a })
+));
+const nose = new THREE.Mesh(
+  new THREE.ConeGeometry(2.5, 7, 14),
+  new THREE.MeshLambertMaterial({ color: 0xffd11a })
+);
+nose.position.set(0, 3, 14);
+nose.rotation.x = Math.PI / 2;
+otter.add(nose);
+const antenna = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.6, 0.6, 14, 8),
+  new THREE.MeshLambertMaterial({ color: 0xee2222 })
+);
+antenna.position.set(0, 10, 0);
+otter.add(antenna);
+const flag = new THREE.Mesh(
+  new THREE.BoxGeometry(1.5, 6, 8),
+  new THREE.MeshLambertMaterial({ color: 0x4488ff })
+);
+flag.position.set(9, 5, 0);
+otter.add(flag);
+
+otter.add(new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(), 26, 0xff3333, 5, 3));
+otter.add(new THREE.ArrowHelper(new THREE.Vector3(0, 1, 0), new THREE.Vector3(), 26, 0x33ff33, 5, 3));
+otter.add(new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(), 26, 0x3366ff, 5, 3));
+
+// State
+const state = { yaw: 0, pitch: 0, roll: 0, padding: [0, 0, 0], corruptActive: false };
+
+function computeMatrix(yaw, pitch, roll) {
+  const cy = Math.cos(yaw), sy = Math.sin(yaw);
+  const cp = Math.cos(pitch), sp = Math.sin(pitch);
+  const cr = Math.cos(roll), sr = Math.sin(roll);
+
+  // R = R_y · R_x · R_z (consistent with Concept 7)
+  const a00 = cy,         a01 = sy * sp,    a02 = sy * cp;
+  const a10 = 0,          a11 = cp,         a12 = -sp;
+  const a20 = -sy,        a21 = cy * sp,    a22 = cy * cp;
+
+  const m00 = a00 * cr + a01 * sr;
+  const m01 = -a00 * sr + a01 * cr;
+  const m02 = a02;
+  const m10 = a10 * cr + a11 * sr;
+  const m11 = -a10 * sr + a11 * cr;
+  const m12 = a12;
+  const m20 = a20 * cr + a21 * sr;
+  const m21 = -a20 * sr + a21 * cr;
+  const m22 = a22;
+
+  return [[m00, m01, m02], [m10, m11, m12], [m20, m21, m22]];
+}
+
+function matrixToR12(M, padding) {
+  return [
+    M[0][0], M[0][1], M[0][2], padding[0],
+    M[1][0], M[1][1], M[1][2], padding[1],
+    M[2][0], M[2][1], M[2][2], padding[2],
+  ];
+}
+
+function matrixToQuat(M) {
+  const trace = M[0][0] + M[1][1] + M[2][2];
+  let w, x, y, z;
+  if (trace > 0) {
+    const s = 0.5 / Math.sqrt(trace + 1.0);
+    w = 0.25 / s;
+    x = (M[2][1] - M[1][2]) * s;
+    y = (M[0][2] - M[2][0]) * s;
+    z = (M[1][0] - M[0][1]) * s;
+  } else if (M[0][0] > M[1][1] && M[0][0] > M[2][2]) {
+    const s = 2.0 * Math.sqrt(1.0 + M[0][0] - M[1][1] - M[2][2]);
+    w = (M[2][1] - M[1][2]) / s;
+    x = 0.25 * s;
+    y = (M[0][1] + M[1][0]) / s;
+    z = (M[0][2] + M[2][0]) / s;
+  } else if (M[1][1] > M[2][2]) {
+    const s = 2.0 * Math.sqrt(1.0 + M[1][1] - M[0][0] - M[2][2]);
+    w = (M[0][2] - M[2][0]) / s;
+    x = (M[0][1] + M[1][0]) / s;
+    y = 0.25 * s;
+    z = (M[1][2] + M[2][1]) / s;
+  } else {
+    const s = 2.0 * Math.sqrt(1.0 + M[2][2] - M[0][0] - M[1][1]);
+    w = (M[1][0] - M[0][1]) / s;
+    x = (M[0][2] + M[2][0]) / s;
+    y = (M[1][2] + M[2][1]) / s;
+    z = 0.25 * s;
+  }
+  if (w < 0) { w = -w; x = -x; y = -y; z = -z; }
+  return { w, x, y, z };
+}
+
+function buildR12Display(r12) {
+  const grid = document.getElementById('r12Array');
+  grid.innerHTML = '';
+  const labels = ['r0', 'r1', 'r2', 'PAD', 'r4', 'r5', 'r6', 'PAD', 'r8', 'r9', 'r10', 'PAD'];
+  const rowLabels = [
+    'Fila 0: M[0,0], M[0,1], M[0,2], pad',
+    'Fila 1: M[1,0], M[1,1], M[1,2], pad',
+    'Fila 2: M[2,0], M[2,1], M[2,2], pad',
+  ];
+  for (let i = 0; i < 12; i++) {
+    const isPadding = (i === 3 || i === 7 || i === 11);
+    const cell = document.createElement('div');
+    cell.className = 'r12-cell' + (isPadding ? ' padding' : '');
+    cell.innerHTML = `
+      <div class="idx">[${i}] ${labels[i]}</div>
+      <div class="val">${r12[i].toFixed(2)}</div>
+    `;
+    grid.appendChild(cell);
+    if (i === 3 || i === 7 || i === 11) {
+      const rowLabel = document.createElement('div');
+      rowLabel.className = 'r12-row-label';
+      const rowIdx = Math.floor(i / 4);
+      rowLabel.textContent = rowLabels[rowIdx];
+      grid.insertBefore(rowLabel, grid.firstChild);
+      grid.appendChild(rowLabel);
+    }
+  }
+}
+
+function updateScene() {
+  const yawR = state.yaw * Math.PI / 180;
+  const pitchR = state.pitch * Math.PI / 180;
+  const rollR = state.roll * Math.PI / 180;
+
+  const M = computeMatrix(yawR, pitchR, rollR);
+
+  // Apply to Otter (Three.js uses ZYX intrinsic by default with .setFromRotationMatrix)
+  const tm = new THREE.Matrix4();
+  tm.set(
+    M[0][0], M[0][1], M[0][2], 0,
+    M[1][0], M[1][1], M[1][2], 0,
+    M[2][0], M[2][1], M[2][2], 0,
+    0, 0, 0, 1
+  );
+  otter.quaternion.setFromRotationMatrix(tm);
+
+  // R[12] array
+  const r12 = matrixToR12(M, state.padding);
+  buildR12Display(r12);
+
+  // Show 3×3
+  for (let i = 0; i < 3; i++) {
+    for (let j = 0; j < 3; j++) {
+      document.getElementById(`m${i}${j}`).textContent = M[i][j].toFixed(2);
+    }
+  }
+
+  // Quaternion
+  const q = matrixToQuat(M);
+  document.getElementById('qw').textContent = q.w.toFixed(3);
+  document.getElementById('qx').textContent = q.x.toFixed(3);
+  document.getElementById('qy').textContent = q.y.toFixed(3);
+  document.getElementById('qz').textContent = q.z.toFixed(3);
+
+  document.getElementById('corruptBanner').classList.toggle('active', state.corruptActive);
+}
+
+function bindSlider(id, key, displayId) {
+  const slider = document.getElementById(id);
+  const display = document.getElementById(displayId);
+  slider.addEventListener('input', () => {
+    state[key] = parseFloat(slider.value);
+    display.textContent = state[key] + '°';
+    updateScene();
+  });
+}
+bindSlider('yaw', 'yaw', 'yawVal');
+bindSlider('pitch', 'pitch', 'pitchVal');
+bindSlider('roll', 'roll', 'rollVal');
+
+document.querySelectorAll('.presets button[data-yaw]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    state.yaw = parseFloat(btn.dataset.yaw);
+    state.pitch = parseFloat(btn.dataset.pitch);
+    state.roll = parseFloat(btn.dataset.roll);
+    document.getElementById('yaw').value = state.yaw;
+    document.getElementById('pitch').value = state.pitch;
+    document.getElementById('roll').value = state.roll;
+    document.getElementById('yawVal').textContent = state.yaw + '°';
+    document.getElementById('pitchVal').textContent = state.pitch + '°';
+    document.getElementById('rollVal').textContent = state.roll + '°';
+    updateScene();
+  });
+});
+
+document.getElementById('corruptBtn').addEventListener('click', () => {
+  if (!state.corruptActive) {
+    state.padding = [
+      (Math.random() - 0.5) * 1000,
+      (Math.random() - 0.5) * 1000,
+      (Math.random() - 0.5) * 1000,
+    ];
+    state.corruptActive = true;
+    document.getElementById('corruptBtn').textContent = '✓ Restaurar padding';
+  } else {
+    state.padding = [0, 0, 0];
+    state.corruptActive = false;
+    document.getElementById('corruptBtn').textContent = '⚠️ Alterar padding (demo)';
+  }
+  updateScene();
+});
+
+function resizeRenderer() {
+  const rect = canvasWrap.getBoundingClientRect();
+  const w = Math.max(rect.width, 320);
+  const h = Math.max(rect.height, 320);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h, false);
+}
+window.addEventListener('resize', resizeRenderer);
+new ResizeObserver(resizeRenderer).observe(canvasWrap);
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+updateScene();
+animate();
+</script>
+
+</body>
+</html>

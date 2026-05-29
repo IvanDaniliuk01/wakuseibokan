@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Visualización 3D: El ángulo de yaw</title>
+<style>
+  body {
+    margin: 0;
+    font-family: -apple-system, system-ui, sans-serif;
+    background: #1a1a2e;
+    color: #eaeaea;
+    overflow: hidden;
+  }
+  #container { display: flex; height: 100vh; }
+  #canvas-wrap { flex: 1; position: relative; }
+  canvas { display: block; }
+  #panel {
+    width: 360px;
+    padding: 16px 20px;
+    background: #0f0f1a;
+    overflow-y: auto;
+    box-shadow: -2px 0 10px rgba(0,0,0,0.3);
+  }
+  #panel h1 {
+    font-size: 18px;
+    margin: 0 0 4px 0;
+    color: #ffe066;
+  }
+  #panel h2 {
+    font-size: 12px;
+    margin: 18px 0 6px 0;
+    color: #ffe066;
+    opacity: 0.85;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border-bottom: 1px solid rgba(255,224,102,0.2);
+    padding-bottom: 4px;
+  }
+  .slider-block { margin: 12px 0; }
+  .slider-block label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    margin-bottom: 4px;
+  }
+  .slider-block input[type=range] { width: 100%; cursor: pointer; }
+  .value-display { font-family: monospace; color: #ffe066; }
+  .display-block {
+    margin: 8px 0;
+    padding: 10px 12px;
+    background: #1a1a2e;
+    border-radius: 4px;
+    border-left: 3px solid #ffe066;
+  }
+  .display-label {
+    font-size: 10px;
+    opacity: 0.7;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .display-value {
+    font-family: monospace;
+    font-size: 22px;
+    font-weight: bold;
+    color: #ffe066;
+  }
+  .display-secondary {
+    font-family: monospace;
+    font-size: 13px;
+    opacity: 0.8;
+    margin-top: 2px;
+  }
+  .presets { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+  .presets button {
+    background: #ffe066;
+    color: #1a1a2e;
+    border: none;
+    padding: 7px 11px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: bold;
+  }
+  .presets button:hover { background: #ffd93d; }
+  .note {
+    font-size: 11px;
+    opacity: 0.75;
+    margin-top: 14px;
+    padding: 10px;
+    background: rgba(255,255,255,0.04);
+    border-radius: 4px;
+    line-height: 1.5;
+  }
+  .legend {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    background: rgba(15,15,26,0.88);
+    padding: 10px 14px;
+    border-radius: 6px;
+    font-size: 12px;
+    color: #eaeaea;
+    border: 1px solid rgba(255,224,102,0.3);
+  }
+  .legend-title { margin-bottom: 8px; font-weight: bold; color: #ffe066; }
+  .legend-help {
+    font-size: 11px;
+    opacity: 0.8;
+    line-height: 1.5;
+  }
+</style>
+</head>
+<body>
+
+<div id="container">
+  <div id="canvas-wrap">
+    <div class="legend">
+      <div class="legend-title">Leyenda</div>
+      <div>🟡 Flecha amarilla = dirección donde mira el Otter</div>
+      <div>🟢 Arco verde = ángulo de yaw (desde la referencia sur)</div>
+      <div>⚪ Rosa de los vientos = graduación cada 30°</div>
+      <div class="legend-help" style="margin-top: 10px;">
+        🖱️ Arrastrar = orbitar cámara<br>
+        🖱️ Scroll = zoom
+      </div>
+    </div>
+  </div>
+
+  <div id="panel">
+    <h1>Ángulo de yaw</h1>
+    <p style="font-size: 12px; opacity: 0.7; margin: 0;">Concepto 3 — visualización 3D</p>
+
+    <h2>Control</h2>
+
+    <div class="slider-block">
+      <label>Yaw
+        <span class="value-display" id="yawVal">0°</span>
+      </label>
+      <input type="range" id="yaw" min="-180" max="360" value="0" step="1">
+    </div>
+
+    <h2>Valor del ángulo</h2>
+
+    <div class="display-block">
+      <div class="display-label">En grados (humano)</div>
+      <div class="display-value" id="degVal">0°</div>
+      <div class="display-secondary" id="degDesc">Otter mira al sur</div>
+    </div>
+
+    <div class="display-block">
+      <div class="display-label">En radianes (matemático)</div>
+      <div class="display-value" id="radVal">0.000</div>
+      <div class="display-secondary" id="radPi">= 0 × π</div>
+    </div>
+
+    <h2>Presets</h2>
+    <div class="presets">
+      <button data-yaw="0">0° (sur)</button>
+      <button data-yaw="45">45° (sureste)</button>
+      <button data-yaw="90">90° (este)</button>
+      <button data-yaw="135">135° (noreste)</button>
+      <button data-yaw="180">180° (norte)</button>
+      <button data-yaw="-45">-45° (suroeste)</button>
+      <button data-yaw="-90">-90° (oeste)</button>
+      <button data-yaw="-135">-135° (noroeste)</button>
+      <button data-yaw="360">360° (vuelta completa)</button>
+    </div>
+
+    <div class="note">
+      <strong>💡 Cosas que tenés que probar:</strong><br><br>
+      1. Mové el slider y mirá cómo cambian los dos valores (grados y radianes) al mismo tiempo.<br><br>
+      2. Llevalo a <strong>90°</strong>: en radianes son ≈1.57 = π/2.<br><br>
+      3. Llevalo a <strong>180°</strong>: en radianes son ≈3.14 = π.<br><br>
+      4. Llevalo a <strong>360°</strong>: el Otter terminó mirando para el mismo lado que en 0°. Una vuelta completa = 2π radianes ≈ 6.28.<br><br>
+      5. Probá ángulos negativos: -90° y +270° apuntan al mismo lado (oeste).
+    </div>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const canvasWrap = document.getElementById('canvas-wrap');
+
+// Scene
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xb0d0e0);
+scene.fog = new THREE.Fog(0xb0d0e0, 400, 800);
+
+// Camera
+const camera = new THREE.PerspectiveCamera(
+  45,
+  (window.innerWidth - 360) / window.innerHeight,
+  1,
+  2000
+);
+camera.position.set(160, 200, 240);
+
+// Renderer
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth - 360, window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+canvasWrap.appendChild(renderer.domElement);
+
+// Controls
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 5, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.07;
+controls.update();
+
+// Lights
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+const sun = new THREE.DirectionalLight(0xffffff, 0.85);
+sun.position.set(120, 250, 80);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -200;
+sun.shadow.camera.right = 200;
+sun.shadow.camera.top = 200;
+sun.shadow.camera.bottom = -200;
+scene.add(sun);
+
+// Ground
+const groundGeo = new THREE.PlaneGeometry(400, 400);
+const groundMat = new THREE.MeshLambertMaterial({ color: 0x86a866 });
+const ground = new THREE.Mesh(groundGeo, groundMat);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// Label helper
+function makeLabel(text, color = '#222', bg = 'rgba(255,255,255,0.92)', fontSize = 36) {
+  const cv = document.createElement('canvas');
+  cv.width = 256; cv.height = 64;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(1, 1, cv.width - 2, cv.height - 2);
+  ctx.fillStyle = color;
+  ctx.font = `bold ${fontSize}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, cv.width / 2, cv.height / 2);
+  const tex = new THREE.CanvasTexture(cv);
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(36, 9, 1);
+  return sprite;
+}
+
+// Compass rose on the ground — radius 110
+const ROSE_R = 110;
+
+// Main circle
+const circleSegments = 64;
+const circlePoints = [];
+for (let i = 0; i <= circleSegments; i++) {
+  const a = (i / circleSegments) * Math.PI * 2;
+  circlePoints.push(new THREE.Vector3(Math.cos(a) * ROSE_R, 0.1, Math.sin(a) * ROSE_R));
+}
+const circleGeo = new THREE.BufferGeometry().setFromPoints(circlePoints);
+const circleMat = new THREE.LineBasicMaterial({ color: 0x333333, linewidth: 2 });
+scene.add(new THREE.Line(circleGeo, circleMat));
+
+// Tick marks every 30°
+for (let deg = 0; deg < 360; deg += 30) {
+  // We define yaw = 0 → south (+Z), positive yaw goes counterclockwise when viewed from above
+  // For drawing the rose, we want tick at "yaw angle deg" to be at the position where
+  // the Otter's forward would point at that yaw.
+  // Otter forward at yaw=θ is (sin θ, 0, cos θ).
+  const rad = deg * Math.PI / 180;
+  const x = Math.sin(rad) * ROSE_R;
+  const z = Math.cos(rad) * ROSE_R;
+  const xIn = Math.sin(rad) * (ROSE_R - 8);
+  const zIn = Math.cos(rad) * (ROSE_R - 8);
+
+  const tickGeo = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(xIn, 0.1, zIn),
+    new THREE.Vector3(x, 0.1, z),
+  ]);
+  const tickColor = (deg % 90 === 0) ? 0x222222 : 0x666666;
+  const tickMat = new THREE.LineBasicMaterial({ color: tickColor });
+  scene.add(new THREE.Line(tickGeo, tickMat));
+
+  // Degree label (offset outward)
+  const xOut = Math.sin(rad) * (ROSE_R + 18);
+  const zOut = Math.cos(rad) * (ROSE_R + 18);
+  const lbl = makeLabel(`${deg}°`, '#222', 'rgba(255,255,255,0.85)', 28);
+  lbl.position.set(xOut, 4, zOut);
+  lbl.scale.set(22, 6, 1);
+  scene.add(lbl);
+}
+
+// Cardinal direction labels (large, colored)
+const cardinals = [
+  { text: 'SUR (0°)', x: 0, z: ROSE_R + 45, color: '#aa2222', bg: 'rgba(255,230,230,0.95)' },
+  { text: 'ESTE (90°)', x: ROSE_R + 45, z: 0, color: '#226622', bg: 'rgba(230,255,230,0.95)' },
+  { text: 'NORTE (180°)', x: 0, z: -ROSE_R - 45, color: '#222266', bg: 'rgba(230,230,255,0.95)' },
+  { text: 'OESTE (-90°)', x: -ROSE_R - 45, z: 0, color: '#aa6622', bg: 'rgba(255,240,220,0.95)' },
+];
+cardinals.forEach(c => {
+  const lbl = makeLabel(c.text, c.color, c.bg, 30);
+  lbl.position.set(c.x, 8, c.z);
+  lbl.scale.set(56, 14, 1);
+  scene.add(lbl);
+});
+
+// Reference direction (sur = +Z), thin gray line on the ground
+const refGeo = new THREE.BufferGeometry().setFromPoints([
+  new THREE.Vector3(0, 0.15, 0),
+  new THREE.Vector3(0, 0.15, ROSE_R),
+]);
+const refMat = new THREE.LineBasicMaterial({ color: 0x888888 });
+const refLine = new THREE.Line(refGeo, refMat);
+scene.add(refLine);
+
+// Reference label
+const refLabel = makeLabel('REFERENCIA (yaw=0)', '#666', 'rgba(255,255,255,0.7)', 24);
+refLabel.position.set(0, 3, ROSE_R / 2);
+refLabel.scale.set(50, 7, 1);
+scene.add(refLabel);
+
+// Otter (group)
+const otter = new THREE.Group();
+scene.add(otter);
+
+const bodyGeo = new THREE.BoxGeometry(14, 6, 22);
+const bodyMat = new THREE.MeshLambertMaterial({ color: 0x2a7a2a });
+const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
+bodyMesh.position.y = 3;
+bodyMesh.castShadow = true;
+otter.add(bodyMesh);
+
+// Nose marker
+const noseGeo = new THREE.ConeGeometry(2.5, 6, 14);
+const noseMat = new THREE.MeshLambertMaterial({ color: 0xffd11a });
+const nose = new THREE.Mesh(noseGeo, noseMat);
+nose.position.set(0, 6, 13);
+nose.rotation.x = Math.PI / 2;
+nose.castShadow = true;
+otter.add(nose);
+
+// Yellow forward arrow — child of Otter (rotates with it)
+const forwardArrow = new THREE.ArrowHelper(
+  new THREE.Vector3(0, 0, 1),
+  new THREE.Vector3(0, 5, 0),
+  ROSE_R,
+  0xffaa00,
+  18,
+  10
+);
+forwardArrow.line.material.linewidth = 3;
+otter.add(forwardArrow);
+
+// Yellow forward arrow label
+const fwdLabel = makeLabel('Forward (+Z_B)', '#aa7700', 'rgba(255,250,220,0.95)', 26);
+fwdLabel.position.set(0, 10, ROSE_R + 5);
+fwdLabel.scale.set(40, 10, 1);
+otter.add(fwdLabel);
+
+// Green arc showing the angle — built dynamically
+const arcGroup = new THREE.Group();
+scene.add(arcGroup);
+
+function buildArc(yawDeg) {
+  // Clear previous
+  while (arcGroup.children.length > 0) {
+    const child = arcGroup.children[0];
+    arcGroup.remove(child);
+    if (child.geometry) child.geometry.dispose();
+    if (child.material) child.material.dispose();
+  }
+
+  const yawRad = yawDeg * Math.PI / 180;
+  if (Math.abs(yawDeg) < 0.5) return;
+
+  // Arc from yaw=0 (south, +Z) to current yaw
+  const arcR = ROSE_R * 0.55;
+  const steps = Math.max(8, Math.abs(Math.round(yawDeg / 3)));
+  const pts = [];
+  for (let i = 0; i <= steps; i++) {
+    const a = (i / steps) * yawRad;
+    pts.push(new THREE.Vector3(Math.sin(a) * arcR, 1.0, Math.cos(a) * arcR));
+  }
+  const arcGeo = new THREE.BufferGeometry().setFromPoints(pts);
+  const arcMat = new THREE.LineBasicMaterial({ color: 0x00aa44, linewidth: 4 });
+  const arcLine = new THREE.Line(arcGeo, arcMat);
+  arcGroup.add(arcLine);
+
+  // Filled arc (sector) — semi-transparent
+  // Note: Shape geometry is built in its own 2D XY plane and then rotated
+  // -π/2 around X to lie on the ground. That rotation maps shape-Y to world -Z.
+  // To make a shape point at world +Z (south), the shape must point at -Y.
+  // So we negate the Y component below.
+  const shape = new THREE.Shape();
+  shape.moveTo(0, 0);
+  for (let i = 0; i <= steps; i++) {
+    const a = (i / steps) * yawRad;
+    shape.lineTo(Math.sin(a) * arcR, -Math.cos(a) * arcR);
+  }
+  shape.lineTo(0, 0);
+  const fillGeo = new THREE.ShapeGeometry(shape);
+  const fillMat = new THREE.MeshBasicMaterial({
+    color: 0x00cc55,
+    transparent: true,
+    opacity: 0.22,
+    side: THREE.DoubleSide,
+  });
+  const fillMesh = new THREE.Mesh(fillGeo, fillMat);
+  fillMesh.rotation.x = -Math.PI / 2;
+  fillMesh.position.y = 0.3;
+  arcGroup.add(fillMesh);
+}
+
+// State
+const state = { yaw: 0 };
+
+function describeYaw(deg) {
+  // Normalize to (-180, 360]
+  let d = ((deg % 360) + 360) % 360;
+  if (d > 180) d -= 360;
+
+  const directions = [
+    { dir: 'sur', min: -22.5, max: 22.5 },
+    { dir: 'sureste', min: 22.5, max: 67.5 },
+    { dir: 'este', min: 67.5, max: 112.5 },
+    { dir: 'noreste', min: 112.5, max: 157.5 },
+    { dir: 'norte', min: 157.5, max: 180.01 },
+    { dir: 'norte', min: -180, max: -157.5 },
+    { dir: 'noroeste', min: -157.5, max: -112.5 },
+    { dir: 'oeste', min: -112.5, max: -67.5 },
+    { dir: 'suroeste', min: -67.5, max: -22.5 },
+  ];
+  for (const r of directions) {
+    if (d >= r.min && d < r.max) return `Otter mira al ${r.dir}`;
+  }
+  return '';
+}
+
+function piFraction(deg) {
+  // Express deg as fraction of π in radians
+  const piMultiplier = deg / 180;
+  if (Math.abs(piMultiplier) < 0.001) return '0 × π';
+  // Try to find a nice fraction
+  const nice = [
+    { v: 1/6, s: 'π/6' }, { v: 1/4, s: 'π/4' }, { v: 1/3, s: 'π/3' },
+    { v: 1/2, s: 'π/2' }, { v: 2/3, s: '2π/3' }, { v: 3/4, s: '3π/4' },
+    { v: 5/6, s: '5π/6' }, { v: 1, s: 'π' }, { v: 7/6, s: '7π/6' },
+    { v: 5/4, s: '5π/4' }, { v: 4/3, s: '4π/3' }, { v: 3/2, s: '3π/2' },
+    { v: 5/3, s: '5π/3' }, { v: 7/4, s: '7π/4' }, { v: 11/6, s: '11π/6' },
+    { v: 2, s: '2π' },
+  ];
+  const absPi = Math.abs(piMultiplier);
+  for (const n of nice) {
+    if (Math.abs(absPi - n.v) < 0.01) {
+      return (piMultiplier < 0 ? '-' : '') + n.s;
+    }
+  }
+  return `${piMultiplier.toFixed(3)} × π`;
+}
+
+function updateScene() {
+  otter.rotation.y = state.yaw * Math.PI / 180;
+
+  document.getElementById('degVal').textContent = `${state.yaw.toFixed(0)}°`;
+  document.getElementById('degDesc').textContent = describeYaw(state.yaw);
+  const rad = state.yaw * Math.PI / 180;
+  document.getElementById('radVal').textContent = rad.toFixed(3);
+  document.getElementById('radPi').textContent = '= ' + piFraction(state.yaw);
+
+  buildArc(state.yaw);
+}
+
+// Slider
+const slider = document.getElementById('yaw');
+const display = document.getElementById('yawVal');
+slider.addEventListener('input', () => {
+  state.yaw = parseFloat(slider.value);
+  display.textContent = state.yaw + '°';
+  updateScene();
+});
+
+// Presets
+document.querySelectorAll('.presets button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    state.yaw = parseFloat(btn.dataset.yaw);
+    slider.value = state.yaw;
+    display.textContent = state.yaw + '°';
+    updateScene();
+  });
+});
+
+// Resize
+window.addEventListener('resize', () => {
+  const w = window.innerWidth - 360;
+  camera.aspect = w / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, window.innerHeight);
+});
+
+// Render loop
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+updateScene();
+animate();
+</script>
+
+</body>
+</html>
