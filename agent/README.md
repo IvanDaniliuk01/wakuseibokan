@@ -7,17 +7,37 @@ contra otro Otter usando Reinforcement Learning (SAC).
 
 ```
 agent/
-├── packet_format.py    # Parse/pack de ModelRecord, ControlStructure2, TickRecord
-├── udp_io.py           # Cliente UDP: telemetría individual + Lobby
-├── state_encoder.py    # Convierte ModelRecord crudo en vector de features
-├── dispatcher.py       # Acción → ControlStructure2 + trigger discipline
-├── map_belief.py       # (PENDIENTE) Belief incremental del city center
-├── state_estimator.py  # (PENDIENTE) LSTM que infiere belief enemigo
-├── env.py              # (PENDIENTE) Gymnasium env wrapper
-├── train.py            # (PENDIENTE) Script de entrenamiento SAC
-├── eval.py             # (PENDIENTE) Script de evaluación
-├── tests/              # Tests unitarios
+├── packet_format.py        # Parse/pack de ModelRecord, ControlStructure2, TickRecord
+├── udp_io.py               # Cliente UDP: telemetría individual + Lobby
+├── state_encoder.py        # Convierte ModelRecord crudo en vector de features
+├── dispatcher.py           # Acción → ControlStructure2 + trigger discipline
+├── collect.py              # Recolecta dataset HDF5 (random/scripted policy)
+├── eval.py                 # Evalúa un modelo entrenado contra el simulador
+├── colab/
+│   ├── train_offline_colab.py  # Script para entrenar en Colab (offline RL)
+│   └── COLAB_WORKFLOW.md       # Workflow paso a paso de Colab
+├── map_belief.py           # (PENDIENTE) Belief incremental del city center
+├── state_estimator.py      # (PENDIENTE) LSTM que infiere belief enemigo
+├── env.py                  # (PENDIENTE) Gymnasium env wrapper
+├── tests/                  # Tests unitarios
 └── requirements.txt
+```
+
+## Workflow Colab (training pesado en GPU remota)
+
+Ver detalle completo en [colab/COLAB_WORKFLOW.md](colab/COLAB_WORKFLOW.md). Resumen:
+
+```
+LOCAL (tu máquina)              REMOTE (Colab T4)
+──────────────────              ─────────────────
+1. collect.py (~3h)
+   → dataset.h5
+2. Sube a Drive (5min)  ─────▶  3. train_offline_colab.py (~3-6h)
+                                   → modelo.pt en Drive
+                        ◀─────  4. Descarga modelo (5min)
+5. eval.py (~10min)
+   ↓
+Iterar
 ```
 
 ## Documentación de fondo
