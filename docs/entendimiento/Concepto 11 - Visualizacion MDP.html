@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Visualización 3D: MDP en vivo</title>
+<style>
+  body {
+    margin: 0;
+    font-family: -apple-system, system-ui, sans-serif;
+    background: #1a1a2e;
+    color: #eaeaea;
+    overflow: hidden;
+    height: 100vh;
+  }
+  #container { display: flex; height: 100vh; width: 100vw; }
+  #canvas-wrap { flex: 1 1 auto; position: relative; min-width: 0; min-height: 0; }
+  canvas { display: block; }
+  #panel {
+    flex: 0 0 410px;
+    padding: 16px 20px;
+    background: #0f0f1a;
+    overflow-y: auto;
+    overflow-x: hidden;
+    box-shadow: -2px 0 10px rgba(0,0,0,0.3);
+    box-sizing: border-box;
+  }
+  @media (max-width: 900px) {
+    body { overflow: auto; }
+    #container { flex-direction: column; height: auto; min-height: 100vh; }
+    #canvas-wrap { height: 55vh; min-height: 400px; flex: 0 0 auto; }
+    #panel { flex: 1 1 auto; width: 100%; max-width: 100%; }
+  }
+
+  h1 { font-size: 18px; margin: 0 0 4px 0; color: #ffe066; }
+  h2 {
+    font-size: 12px;
+    margin: 14px 0 6px 0;
+    color: #ffe066;
+    opacity: 0.85;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border-bottom: 1px solid rgba(255,224,102,0.2);
+    padding-bottom: 4px;
+  }
+
+  .slider-block { margin: 8px 0; }
+  .slider-block label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    margin-bottom: 4px;
+  }
+  .slider-block input[type=range] { width: 100%; cursor: pointer; }
+  .value-display { font-family: monospace; color: #ffe066; }
+
+  .state-block, .action-block {
+    background: #1a1a2e;
+    border-radius: 4px;
+    padding: 10px 12px;
+    margin: 8px 0;
+    border-left: 3px solid;
+    font-family: monospace;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  .state-block { border-color: #4ecdc4; }
+  .action-block { border-color: #ff8866; }
+  .block-label {
+    font-size: 10px;
+    opacity: 0.75;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #ffe066;
+    margin-bottom: 4px;
+    font-family: -apple-system, system-ui, sans-serif;
+  }
+
+  .reward-display {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin: 10px 0;
+  }
+  .reward-cell {
+    background: #1a1a2e;
+    border-radius: 4px;
+    padding: 10px 12px;
+    border-left: 3px solid;
+    text-align: center;
+  }
+  .reward-cell.tick { border-color: #ff5577; }
+  .reward-cell.total { border-color: #66ff77; }
+  .reward-cell .label {
+    font-size: 10px;
+    opacity: 0.75;
+    text-transform: uppercase;
+  }
+  .reward-cell .value {
+    font-family: monospace;
+    font-size: 18px;
+    font-weight: bold;
+    margin-top: 4px;
+  }
+  .reward-cell.tick .value { color: #ff8899; }
+  .reward-cell.total .value { color: #88ff99; }
+
+  .mode-buttons { display: flex; gap: 6px; margin: 10px 0; }
+  .mode-buttons button {
+    flex: 1;
+    background: #444;
+    color: #ccc;
+    border: 2px solid transparent;
+    padding: 8px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: bold;
+  }
+  .mode-buttons button.active {
+    background: #ffe066;
+    color: #1a1a2e;
+    border-color: #ffe066;
+  }
+
+  .control-buttons { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+  .control-buttons button {
+    background: #ff7755;
+    color: white;
+    border: none;
+    padding: 8px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: bold;
+  }
+  .control-buttons button.pause { background: #66ddd4; color: #0f0f1a; }
+
+  .episode-log {
+    background: #1a1a2e;
+    border-radius: 4px;
+    padding: 10px 12px;
+    margin: 8px 0;
+    border-left: 3px solid #cc88ff;
+    font-family: monospace;
+    font-size: 12px;
+    max-height: 140px;
+    overflow-y: auto;
+  }
+  .ep-row {
+    padding: 2px 0;
+    color: #d4aaff;
+  }
+  .ep-row.win { color: #88ff99; }
+  .ep-row.lose { color: #ff8899; }
+  .ep-row.timeout { color: #ffaa66; }
+
+  .note {
+    font-size: 11px;
+    opacity: 0.75;
+    margin-top: 12px;
+    padding: 10px;
+    background: rgba(255,255,255,0.04);
+    border-radius: 4px;
+    line-height: 1.5;
+  }
+
+  .legend {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    background: rgba(15,15,26,0.88);
+    padding: 10px 14px;
+    border-radius: 6px;
+    font-size: 11px;
+    color: #eaeaea;
+    border: 1px solid rgba(255,224,102,0.3);
+    max-width: 280px;
+  }
+  .legend-title { margin-bottom: 6px; font-weight: bold; color: #ffe066; font-size: 13px; }
+  .legend-row { margin: 3px 0; display: flex; align-items: center; gap: 8px; }
+  .legend-color { width: 14px; height: 14px; border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<div id="container">
+  <div id="canvas-wrap">
+    <div class="legend">
+      <div class="legend-title">Mini-MDP en vivo</div>
+      <div class="legend-row">
+        <span class="legend-color" style="background:#2a7a2a"></span>
+        <span>Otter (agente)</span>
+      </div>
+      <div class="legend-row">
+        <span class="legend-color" style="background:#ffe066"></span>
+        <span>Objetivo (terminal +100)</span>
+      </div>
+      <div class="legend-row">
+        <span class="legend-color" style="background:#cc4444"></span>
+        <span>Pared (choque = -20 y termina)</span>
+      </div>
+      <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.1); font-size: 11px; opacity: 0.8; line-height: 1.5;">
+        <strong>Rewards por tick:</strong> -0.1 por demorarse, +100 al llegar, -20 al chocar pared.
+      </div>
+    </div>
+  </div>
+
+  <div id="panel">
+    <h1>MDP en vivo</h1>
+    <p style="font-size: 12px; opacity: 0.7; margin: 0;">Concepto 11 — visualización 3D</p>
+
+    <h2>Modo</h2>
+    <div class="mode-buttons">
+      <button id="modeManual" class="active">🕹 Manual</button>
+      <button id="modeRandom">🎲 Random</button>
+    </div>
+
+    <h2>Acción (a_t)</h2>
+    <p style="font-size: 11px; opacity: 0.7; margin: 4px 0;">
+      En modo manual, vos elegís. En random, el agente sortea.
+    </p>
+
+    <div class="slider-block">
+      <label>Thrust
+        <span class="value-display" id="thrustVal">0.00</span>
+      </label>
+      <input type="range" id="thrust" min="-1" max="1" value="0" step="0.01">
+    </div>
+    <div class="slider-block">
+      <label>Steering
+        <span class="value-display" id="steeringVal">0.00</span>
+      </label>
+      <input type="range" id="steering" min="-1" max="1" value="0" step="0.01">
+    </div>
+
+    <h2>Estado (s_t)</h2>
+
+    <div class="state-block">
+      <div class="block-label">Vector que ve el agente</div>
+      <span id="stateDisplay">x=0  z=0  yaw=0°  v=0  dist_obj=200  bearing_obj=0°</span>
+    </div>
+
+    <h2>Recompensa</h2>
+
+    <div class="reward-display">
+      <div class="reward-cell tick">
+        <div class="label">Reward de este tick</div>
+        <div class="value" id="rewardTick">0.0</div>
+      </div>
+      <div class="reward-cell total">
+        <div class="label">Retorno acumulado (G_t)</div>
+        <div class="value" id="rewardTotal">0.0</div>
+      </div>
+    </div>
+
+    <h2>Factor de descuento γ</h2>
+
+    <div class="slider-block">
+      <label>γ
+        <span class="value-display" id="gammaVal">0.99</span>
+      </label>
+      <input type="range" id="gamma" min="0" max="1" value="0.99" step="0.01">
+    </div>
+    <p style="font-size: 11px; opacity: 0.7; margin: 4px 0;">
+      γ=0: cortoplacista. γ=1: infinito. γ=0.99: ~100 ticks de horizonte.
+    </p>
+
+    <h2>Episodio actual</h2>
+    <div class="state-block">
+      <div class="block-label">Tick / Status</div>
+      <span id="episodeStatus">tick=0  status=running</span>
+    </div>
+
+    <div class="control-buttons">
+      <button id="resetBtn">↺ Reset episodio</button>
+      <button id="pauseBtn" class="pause">⏸ Pausar</button>
+    </div>
+
+    <h2>Historia de episodios</h2>
+    <div class="episode-log" id="episodeLog">
+      <div style="opacity: 0.5">Sin episodios todavía. Movete o usa modo Random.</div>
+    </div>
+
+    <div class="note">
+      <strong>💡 Lo importante a notar:</strong><br><br>
+      1. <strong>Modo Manual</strong>: probá ir al objetivo. Verás retorno positivo cuando ganás.<br><br>
+      2. <strong>Modo Random</strong>: el agente toma acciones al azar. Vas a ver retornos malos o muy variables. <strong>Eso es lo que el RL vence: superar a random.</strong><br><br>
+      3. Cambiá <strong>γ</strong>. Con γ=0.5 el agente "ve" muy poco al futuro. Con γ=0.99, casi todo.<br><br>
+      4. Mirá el <strong>vector de estado</strong>. Eso es exactamente lo que recibe la red neural en el agente real.
+    </div>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const canvasWrap = document.getElementById('canvas-wrap');
+const ARENA_HALF = 100; // arena from -100 to +100
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xb0d0e0);
+
+const initRect = canvasWrap.getBoundingClientRect();
+const initW = Math.max(initRect.width, 320);
+const initH = Math.max(initRect.height, 320);
+
+const camera = new THREE.PerspectiveCamera(45, initW / initH, 1, 2000);
+camera.position.set(100, 220, 200);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(initW, initH);
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.shadowMap.enabled = true;
+canvasWrap.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.07;
+controls.update();
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+const sun = new THREE.DirectionalLight(0xffffff, 0.7);
+sun.position.set(120, 250, 80);
+sun.castShadow = true;
+scene.add(sun);
+
+// Arena floor
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(ARENA_HALF * 2, ARENA_HALF * 2),
+  new THREE.MeshLambertMaterial({ color: 0x86a866 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+const grid = new THREE.GridHelper(ARENA_HALF * 2, 20, 0x556644, 0x778866);
+grid.position.y = 0.02;
+scene.add(grid);
+
+// Arena walls (red border)
+const wallMat = new THREE.MeshLambertMaterial({ color: 0xcc4444 });
+function makeWall(w, h, d, x, z) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wallMat);
+  m.position.set(x, h / 2, z);
+  m.castShadow = true;
+  scene.add(m);
+}
+const wt = 2;
+makeWall(ARENA_HALF * 2 + wt*2, 4, wt, 0, -ARENA_HALF - wt/2);
+makeWall(ARENA_HALF * 2 + wt*2, 4, wt, 0,  ARENA_HALF + wt/2);
+makeWall(wt, 4, ARENA_HALF * 2, -ARENA_HALF - wt/2, 0);
+makeWall(wt, 4, ARENA_HALF * 2,  ARENA_HALF + wt/2, 0);
+
+// Otter
+const otter = new THREE.Group();
+scene.add(otter);
+const body = new THREE.Mesh(
+  new THREE.BoxGeometry(8, 4, 14),
+  new THREE.MeshLambertMaterial({ color: 0x2a7a2a })
+);
+body.position.y = 2; body.castShadow = true;
+otter.add(body);
+const nose = new THREE.Mesh(
+  new THREE.ConeGeometry(1.6, 4, 12),
+  new THREE.MeshLambertMaterial({ color: 0xffd11a })
+);
+nose.position.set(0, 4, 9);
+nose.rotation.x = Math.PI / 2;
+otter.add(nose);
+
+// Goal
+const goal = new THREE.Mesh(
+  new THREE.BoxGeometry(8, 10, 8),
+  new THREE.MeshLambertMaterial({
+    color: 0xffe066, emissive: 0xffe066, emissiveIntensity: 0.3
+  })
+);
+goal.position.y = 5;
+goal.castShadow = true;
+scene.add(goal);
+
+// Goal beacon (pulse)
+const beacon = new THREE.Mesh(
+  new THREE.TorusGeometry(8, 0.4, 8, 32),
+  new THREE.MeshBasicMaterial({ color: 0xffff00, transparent: true, opacity: 0.7 })
+);
+beacon.rotation.x = Math.PI / 2;
+scene.add(beacon);
+
+// Trail
+const MAX_TRAIL = 800;
+const trailGeo = new THREE.BufferGeometry();
+const trailPositions = new Float32Array(MAX_TRAIL * 3);
+trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPositions, 3));
+trailGeo.setDrawRange(0, 0);
+const trailMat = new THREE.LineBasicMaterial({ color: 0x88ddff });
+scene.add(new THREE.Line(trailGeo, trailMat));
+let trailCount = 0;
+
+function addTrail(x, z) {
+  if (trailCount >= MAX_TRAIL) return;
+  trailPositions[trailCount * 3]     = x;
+  trailPositions[trailCount * 3 + 1] = 0.6;
+  trailPositions[trailCount * 3 + 2] = z;
+  trailCount++;
+  trailGeo.setDrawRange(0, trailCount);
+  trailGeo.attributes.position.needsUpdate = true;
+}
+
+// MDP state
+const sim = {
+  x: 0, z: 0, yaw: 0, v: 0,
+  thrust: 0, steering: 0,
+  reward_total: 0,
+  reward_last: 0,
+  tick: 0,
+  episode: 0,
+  status: 'running',
+  paused: false,
+  mode: 'manual',
+  gamma: 0.99,
+  gammaPower: 1,    // accumulates γ^t for discounting
+  goalX: 60, goalZ: -60,
+};
+
+function setRandomGoal() {
+  // Pick a goal at distance 40-80 from current Otter position
+  const angle = Math.random() * Math.PI * 2;
+  const r = 50 + Math.random() * 30;
+  sim.goalX = Math.max(-80, Math.min(80, sim.x + Math.cos(angle) * r));
+  sim.goalZ = Math.max(-80, Math.min(80, sim.z + Math.sin(angle) * r));
+  goal.position.set(sim.goalX, 5, sim.goalZ);
+}
+
+function resetEpisode() {
+  sim.x = 0; sim.z = 0; sim.yaw = 0; sim.v = 0;
+  sim.tick = 0;
+  sim.reward_total = 0;
+  sim.reward_last = 0;
+  sim.gammaPower = 1;
+  sim.status = 'running';
+  trailCount = 0;
+  trailGeo.setDrawRange(0, 0);
+  setRandomGoal();
+}
+
+resetEpisode();
+
+function getStateVector() {
+  const dx = sim.goalX - sim.x;
+  const dz = sim.goalZ - sim.z;
+  const dist = Math.sqrt(dx*dx + dz*dz);
+  // Bearing to goal in body frame (positive = right of nose)
+  const bearingWorld = Math.atan2(dx, dz);
+  const bearingBody = bearingWorld - sim.yaw;
+  return {
+    x: sim.x, z: sim.z, yaw: sim.yaw, v: sim.v,
+    dist, bearing: bearingBody,
+  };
+}
+
+function step(dt) {
+  if (sim.status !== 'running') return;
+
+  // Get action
+  if (sim.mode === 'random') {
+    sim.thrust = (Math.random() - 0.5) * 2;
+    sim.steering = (Math.random() - 0.5) * 2;
+    document.getElementById('thrust').value = sim.thrust;
+    document.getElementById('steering').value = sim.steering;
+    document.getElementById('thrustVal').textContent = sim.thrust.toFixed(2);
+    document.getElementById('steeringVal').textContent = sim.steering.toFixed(2);
+  }
+  // (in manual mode, sim.thrust/steering already set from sliders)
+
+  // Bicycle kinematics
+  const targetV = sim.thrust * 25;
+  sim.v += (targetV - sim.v) * Math.min(2 * dt, 1);
+  const delta = sim.steering * (30 * Math.PI / 180);
+  const L = 10;
+  sim.x += sim.v * Math.sin(sim.yaw) * dt;
+  sim.z += sim.v * Math.cos(sim.yaw) * dt;
+  sim.yaw += (sim.v / L) * Math.tan(delta) * dt;
+  while (sim.yaw > Math.PI) sim.yaw -= 2 * Math.PI;
+  while (sim.yaw < -Math.PI) sim.yaw += 2 * Math.PI;
+
+  // Reward calculation
+  let r = -0.1; // step penalty
+
+  // Check goal
+  const dx = sim.goalX - sim.x;
+  const dz = sim.goalZ - sim.z;
+  const distToGoal = Math.sqrt(dx*dx + dz*dz);
+
+  // Check wall collision
+  const hitWall = Math.abs(sim.x) > ARENA_HALF || Math.abs(sim.z) > ARENA_HALF;
+
+  if (distToGoal < 8) {
+    r += 100;
+    sim.status = 'win';
+  } else if (hitWall) {
+    r += -20;
+    sim.status = 'wall';
+  } else if (sim.tick > 600) {
+    sim.status = 'timeout';
+  }
+
+  // Accumulate discounted return
+  sim.reward_last = r;
+  sim.reward_total += sim.gammaPower * r;
+  sim.gammaPower *= sim.gamma;
+  sim.tick++;
+
+  // Update visual
+  otter.position.set(sim.x, 0, sim.z);
+  otter.rotation.y = sim.yaw;
+  addTrail(sim.x, sim.z);
+}
+
+function updateDisplays() {
+  const s = getStateVector();
+  document.getElementById('stateDisplay').textContent =
+    `x=${s.x.toFixed(0)}  z=${s.z.toFixed(0)}  yaw=${(s.yaw*180/Math.PI).toFixed(0)}°  ` +
+    `v=${s.v.toFixed(1)}  dist=${s.dist.toFixed(0)}  bearing=${(s.bearing*180/Math.PI).toFixed(0)}°`;
+
+  document.getElementById('rewardTick').textContent = sim.reward_last.toFixed(2);
+  document.getElementById('rewardTotal').textContent = sim.reward_total.toFixed(2);
+
+  const statusMap = { running: '🏃 corriendo', win: '✓ VICTORIA',
+                      wall: '✗ chocó pared', timeout: '⏱ timeout' };
+  document.getElementById('episodeStatus').textContent =
+    `tick=${sim.tick}  status=${statusMap[sim.status]}`;
+}
+
+function logEpisode() {
+  sim.episode++;
+  const log = document.getElementById('episodeLog');
+  if (sim.episode === 1) log.innerHTML = '';
+  const row = document.createElement('div');
+  row.className = 'ep-row ' + (sim.status === 'win' ? 'win' :
+                                sim.status === 'wall' ? 'lose' : 'timeout');
+  row.textContent = `[ep ${sim.episode}] ${sim.status}  ticks=${sim.tick}  G=${sim.reward_total.toFixed(1)}  modo=${sim.mode}`;
+  log.insertBefore(row, log.firstChild);
+  // Keep only 30 entries
+  while (log.children.length > 30) log.removeChild(log.lastChild);
+}
+
+// Sliders
+function bindSlider(id, key, displayId, formatter) {
+  const slider = document.getElementById(id);
+  const display = document.getElementById(displayId);
+  slider.addEventListener('input', () => {
+    sim[key] = parseFloat(slider.value);
+    display.textContent = formatter(sim[key]);
+  });
+}
+bindSlider('thrust', 'thrust', 'thrustVal', v => v.toFixed(2));
+bindSlider('steering', 'steering', 'steeringVal', v => v.toFixed(2));
+bindSlider('gamma', 'gamma', 'gammaVal', v => v.toFixed(2));
+
+// Mode buttons
+document.getElementById('modeManual').addEventListener('click', () => {
+  sim.mode = 'manual';
+  document.getElementById('modeManual').classList.add('active');
+  document.getElementById('modeRandom').classList.remove('active');
+});
+document.getElementById('modeRandom').addEventListener('click', () => {
+  sim.mode = 'random';
+  document.getElementById('modeManual').classList.remove('active');
+  document.getElementById('modeRandom').classList.add('active');
+});
+
+document.getElementById('resetBtn').addEventListener('click', resetEpisode);
+document.getElementById('pauseBtn').addEventListener('click', () => {
+  sim.paused = !sim.paused;
+  document.getElementById('pauseBtn').textContent = sim.paused ? '▶ Reanudar' : '⏸ Pausar';
+});
+
+function resizeRenderer() {
+  const rect = canvasWrap.getBoundingClientRect();
+  const w = Math.max(rect.width, 320);
+  const h = Math.max(rect.height, 320);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h, false);
+}
+window.addEventListener('resize', resizeRenderer);
+new ResizeObserver(resizeRenderer).observe(canvasWrap);
+
+let lastTime = performance.now();
+function animate() {
+  requestAnimationFrame(animate);
+  const now = performance.now();
+  const dt = Math.min((now - lastTime) / 1000, 0.05);
+  lastTime = now;
+
+  if (!sim.paused) {
+    step(dt);
+
+    // Auto reset on episode end after small delay
+    if (sim.status !== 'running' && sim.tick > 0) {
+      logEpisode();
+      sim.tick = 0; // prevent re-logging
+      setTimeout(() => {
+        if (sim.status !== 'running') resetEpisode();
+      }, 1200);
+    }
+  }
+
+  // Beacon pulse
+  beacon.position.copy(goal.position);
+  beacon.position.y = 0.5;
+  const t = performance.now() * 0.003;
+  beacon.scale.set(1 + 0.2 * Math.sin(t), 1 + 0.2 * Math.sin(t), 1);
+
+  updateDisplays();
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+</script>
+
+</body>
+</html>

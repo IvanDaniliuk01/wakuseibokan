@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Visualización 3D: Cinemática del Otter</title>
+<style>
+  body {
+    margin: 0;
+    font-family: -apple-system, system-ui, sans-serif;
+    background: #1a1a2e;
+    color: #eaeaea;
+    overflow: hidden;
+    height: 100vh;
+  }
+  #container { display: flex; height: 100vh; width: 100vw; }
+  #canvas-wrap { flex: 1 1 auto; position: relative; min-width: 0; min-height: 0; }
+  canvas { display: block; }
+  #panel {
+    flex: 0 0 400px;
+    padding: 16px 20px;
+    background: #0f0f1a;
+    overflow-y: auto;
+    overflow-x: hidden;
+    box-shadow: -2px 0 10px rgba(0,0,0,0.3);
+    box-sizing: border-box;
+  }
+  @media (max-width: 900px) {
+    body { overflow: auto; }
+    #container { flex-direction: column; height: auto; min-height: 100vh; }
+    #canvas-wrap { height: 55vh; min-height: 400px; flex: 0 0 auto; }
+    #panel { flex: 1 1 auto; width: 100%; max-width: 100%; }
+  }
+
+  h1 { font-size: 18px; margin: 0 0 4px 0; color: #ffe066; }
+  h2 {
+    font-size: 12px;
+    margin: 16px 0 6px 0;
+    color: #ffe066;
+    opacity: 0.85;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border-bottom: 1px solid rgba(255,224,102,0.2);
+    padding-bottom: 4px;
+  }
+
+  .slider-block { margin: 12px 0; }
+  .slider-block label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    margin-bottom: 4px;
+  }
+  .slider-block input[type=range] { width: 100%; cursor: pointer; }
+  .value-display { font-family: monospace; color: #ffe066; }
+
+  .stat-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin: 10px 0;
+  }
+  .stat-cell {
+    background: #1a1a2e;
+    border-left: 3px solid #4ecdc4;
+    border-radius: 4px;
+    padding: 8px 12px;
+  }
+  .stat-cell .label {
+    font-size: 10px;
+    opacity: 0.7;
+    text-transform: uppercase;
+  }
+  .stat-cell .value {
+    font-family: monospace;
+    font-size: 16px;
+    font-weight: bold;
+    color: #66ddd4;
+    margin-top: 2px;
+  }
+  .stat-cell.wide { grid-column: 1 / -1; }
+
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+  .actions button {
+    background: #ffe066;
+    color: #1a1a2e;
+    border: none;
+    padding: 8px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: bold;
+  }
+  .actions button:hover { background: #ffd93d; }
+  .actions button.danger { background: #ff7755; color: white; }
+  .actions button.pause { background: #66ddd4; color: #0f0f1a; }
+
+  .preset-row { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+  .preset-row button {
+    background: #4ecdc4;
+    color: #0f0f1a;
+    border: none;
+    padding: 6px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: bold;
+  }
+  .preset-row button:hover { background: #66ddd4; }
+
+  .note {
+    font-size: 11px;
+    opacity: 0.75;
+    margin-top: 14px;
+    padding: 10px;
+    background: rgba(255,255,255,0.04);
+    border-radius: 4px;
+    line-height: 1.5;
+  }
+  .legend {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    background: rgba(15,15,26,0.88);
+    padding: 10px 14px;
+    border-radius: 6px;
+    font-size: 11px;
+    color: #eaeaea;
+    border: 1px solid rgba(255,224,102,0.3);
+    max-width: 260px;
+  }
+  .legend-title { margin-bottom: 6px; font-weight: bold; color: #ffe066; font-size: 13px; }
+</style>
+</head>
+<body>
+
+<div id="container">
+  <div id="canvas-wrap">
+    <div class="legend">
+      <div class="legend-title">Simulación cinemática</div>
+      <div style="font-size: 11px; opacity: 0.85; line-height: 1.6;">
+        Movés los sliders y el Otter se mueve en vivo. La <strong>estela amarilla</strong> muestra la trayectoria.<br><br>
+        🖱️ Cámara: arrastrar / scroll
+      </div>
+    </div>
+  </div>
+
+  <div id="panel">
+    <h1>Cinemática del Otter</h1>
+    <p style="font-size: 12px; opacity: 0.7; margin: 0;">Concepto 10 — visualización 3D</p>
+
+    <h2>Comandos del agente</h2>
+
+    <div class="slider-block">
+      <label>Thrust (adelante/atrás)
+        <span class="value-display" id="thrustVal">0.00</span>
+      </label>
+      <input type="range" id="thrust" min="-1" max="1" value="0" step="0.01">
+    </div>
+
+    <div class="slider-block">
+      <label>Steering (ruedas delanteras)
+        <span class="value-display" id="steeringVal">0.00</span>
+      </label>
+      <input type="range" id="steering" min="-1" max="1" value="0" step="0.01">
+    </div>
+
+    <h2>Estado del Otter</h2>
+
+    <div class="stat-grid">
+      <div class="stat-cell">
+        <div class="label">Velocidad</div>
+        <div class="value" id="velVal">0.0 m/s</div>
+      </div>
+      <div class="stat-cell">
+        <div class="label">Yaw</div>
+        <div class="value" id="yawVal">0°</div>
+      </div>
+      <div class="stat-cell">
+        <div class="label">Posición X</div>
+        <div class="value" id="posXVal">0</div>
+      </div>
+      <div class="stat-cell">
+        <div class="label">Posición Z</div>
+        <div class="value" id="posZVal">0</div>
+      </div>
+      <div class="stat-cell wide">
+        <div class="label">Radio de giro instantáneo</div>
+        <div class="value" id="radiusVal">∞ m (recto)</div>
+      </div>
+    </div>
+
+    <h2>Acciones</h2>
+    <div class="actions">
+      <button id="pauseBtn" class="pause">⏸ Pausar</button>
+      <button id="resetBtn" class="danger">↺ Reset</button>
+      <button id="clearTrailBtn">Limpiar estela</button>
+    </div>
+
+    <h2>Maniobras de prueba</h2>
+    <div class="preset-row">
+      <button data-thrust="1" data-steering="0">Acelerar recto</button>
+      <button data-thrust="0.5" data-steering="0.5">Círculo amplio</button>
+      <button data-thrust="0.3" data-steering="1">Círculo cerrado</button>
+    </div>
+    <div class="preset-row">
+      <button data-thrust="-0.5" data-steering="0.5">Retroceso girando</button>
+      <button data-thrust="0" data-steering="1">⚠️ Ruedas torcidas, sin v</button>
+      <button data-thrust="1" data-steering="-0.5">Curva inversa</button>
+    </div>
+
+    <div class="note">
+      <strong>💡 Probá esto:</strong><br><br>
+      1. <strong>"Acelerar recto"</strong>: la estela es una línea. Cuando el thrust es positivo y steering 0, el Otter va recto.<br><br>
+      2. <strong>"Círculo amplio"</strong>: con velocidad media y steering medio, dibuja un círculo grande.<br><br>
+      3. <strong>"Círculo cerrado"</strong>: misma idea, pero steering máximo → radio mínimo. Notá cuánto más cerrado es el círculo.<br><br>
+      4. <strong>"Ruedas torcidas, sin v"</strong>: thrust = 0, steering = 1. <strong>El Otter NO rota</strong>. Las ruedas se ven giradas pero sin velocidad lineal, no hay rotación. Esto es lo característico de Ackermann.<br><br>
+      5. <strong>"Retroceso girando"</strong>: notá que el sentido del giro se INVIERTE cuando vas para atrás.
+    </div>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const canvasWrap = document.getElementById('canvas-wrap');
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xb0d0e0);
+scene.fog = new THREE.Fog(0xb0d0e0, 600, 1500);
+
+const initRect = canvasWrap.getBoundingClientRect();
+const initW = Math.max(initRect.width, 320);
+const initH = Math.max(initRect.height, 320);
+
+const camera = new THREE.PerspectiveCamera(45, initW / initH, 1, 3000);
+camera.position.set(120, 200, 200);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(initW, initH);
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+canvasWrap.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.07;
+controls.update();
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+const sun = new THREE.DirectionalLight(0xffffff, 0.75);
+sun.position.set(120, 250, 80);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -500;
+sun.shadow.camera.right = 500;
+sun.shadow.camera.top = 500;
+sun.shadow.camera.bottom = -500;
+scene.add(sun);
+
+// Big ground
+const groundGeo = new THREE.PlaneGeometry(1500, 1500);
+const groundMat = new THREE.MeshLambertMaterial({ color: 0x86a866 });
+const ground = new THREE.Mesh(groundGeo, groundMat);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+const grid = new THREE.GridHelper(1500, 30, 0x556644, 0x778866);
+grid.position.y = 0.02;
+scene.add(grid);
+
+// World axes for orientation
+function makeWorldAxis(dir, color, length) {
+  const arrow = new THREE.ArrowHelper(dir, new THREE.Vector3(0, 0.5, 0), length, color, 8, 5);
+  arrow.line.material.transparent = true;
+  arrow.line.material.opacity = 0.35;
+  arrow.cone.material.transparent = true;
+  arrow.cone.material.opacity = 0.35;
+  scene.add(arrow);
+}
+makeWorldAxis(new THREE.Vector3(1, 0, 0), 0xff0000, 80);
+makeWorldAxis(new THREE.Vector3(0, 0, 1), 0x0044ff, 80);
+
+// Compass labels via sprites
+function makeLabel(text, color = '#222', bg = 'rgba(255,255,255,0.92)') {
+  const cv = document.createElement('canvas');
+  cv.width = 256; cv.height = 64;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(1, 1, cv.width - 2, cv.height - 2);
+  ctx.fillStyle = color;
+  ctx.font = 'bold 28px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, cv.width / 2, cv.height / 2);
+  const tex = new THREE.CanvasTexture(cv);
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true }));
+  sprite.scale.set(45, 11, 1);
+  return sprite;
+}
+const lblN = makeLabel('NORTE'); lblN.position.set(0, 5, -700); scene.add(lblN);
+const lblS = makeLabel('SUR'); lblS.position.set(0, 5, 700); scene.add(lblS);
+const lblE = makeLabel('ESTE'); lblE.position.set(700, 5, 0); scene.add(lblE);
+const lblW = makeLabel('OESTE'); lblW.position.set(-700, 5, 0); scene.add(lblW);
+
+// The Otter
+const otter = new THREE.Group();
+scene.add(otter);
+
+const bodyMesh = new THREE.Mesh(
+  new THREE.BoxGeometry(8, 4, 14),
+  new THREE.MeshLambertMaterial({ color: 0x2a7a2a })
+);
+bodyMesh.position.y = 2;
+bodyMesh.castShadow = true;
+otter.add(bodyMesh);
+
+const nose = new THREE.Mesh(
+  new THREE.ConeGeometry(1.6, 4, 12),
+  new THREE.MeshLambertMaterial({ color: 0xffd11a })
+);
+nose.position.set(0, 4, 9);
+nose.rotation.x = Math.PI / 2;
+nose.castShadow = true;
+otter.add(nose);
+
+// Wheels (front pair will rotate with steering for visual feedback)
+const wheelMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
+function makeWheel() {
+  const g = new THREE.CylinderGeometry(1.4, 1.4, 1.6, 12);
+  const m = new THREE.Mesh(g, wheelMat);
+  m.rotation.z = Math.PI / 2;
+  m.castShadow = true;
+  return m;
+}
+const wheelFL = new THREE.Group();
+const wheelFR = new THREE.Group();
+const wheelRL = makeWheel();
+const wheelRR = makeWheel();
+wheelFL.add(makeWheel()); wheelFR.add(makeWheel());
+wheelFL.position.set(-4.5, 1.4, 5);
+wheelFR.position.set( 4.5, 1.4, 5);
+wheelRL.position.set(-4.5, 1.4, -5);
+wheelRR.position.set( 4.5, 1.4, -5);
+otter.add(wheelFL); otter.add(wheelFR);
+otter.add(wheelRL); otter.add(wheelRR);
+
+// Trail (line that grows as Otter moves)
+const MAX_TRAIL = 1500;
+const trailGeo = new THREE.BufferGeometry();
+const trailPositions = new Float32Array(MAX_TRAIL * 3);
+trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPositions, 3));
+trailGeo.setDrawRange(0, 0);
+const trailMat = new THREE.LineBasicMaterial({ color: 0xffcc00 });
+const trail = new THREE.Line(trailGeo, trailMat);
+scene.add(trail);
+let trailCount = 0;
+
+function addTrailPoint(x, z) {
+  if (trailCount >= MAX_TRAIL) {
+    // shift left
+    for (let i = 0; i < MAX_TRAIL - 1; i++) {
+      trailPositions[i*3]   = trailPositions[(i+1)*3];
+      trailPositions[i*3+1] = trailPositions[(i+1)*3+1];
+      trailPositions[i*3+2] = trailPositions[(i+1)*3+2];
+    }
+    trailCount = MAX_TRAIL - 1;
+  }
+  trailPositions[trailCount * 3]     = x;
+  trailPositions[trailCount * 3 + 1] = 1.0;
+  trailPositions[trailCount * 3 + 2] = z;
+  trailCount++;
+  trailGeo.setDrawRange(0, trailCount);
+  trailGeo.attributes.position.needsUpdate = true;
+}
+
+function clearTrail() {
+  trailCount = 0;
+  trailGeo.setDrawRange(0, 0);
+}
+
+// Kinematics state
+const sim = {
+  x: 0,
+  z: 0,
+  yaw: 0,
+  v: 0,
+  thrust: 0,
+  steering: 0,
+  paused: false,
+};
+
+const PARAMS = {
+  wheelbase: 10.0,    // distance between axles
+  maxSpeed: 30.0,
+  thrustResponse: 1.5, // how fast velocity tracks target
+  maxSteeringDeg: 30,  // max angle of front wheels
+};
+
+function step(dt) {
+  // Velocity tracking: v approaches thrust * maxSpeed
+  const targetV = sim.thrust * PARAMS.maxSpeed;
+  sim.v += (targetV - sim.v) * Math.min(PARAMS.thrustResponse * dt, 1);
+
+  // Steering angle
+  const delta = sim.steering * (PARAMS.maxSteeringDeg * Math.PI / 180);
+
+  // Bicycle model
+  sim.x += sim.v * Math.sin(sim.yaw) * dt;
+  sim.z += sim.v * Math.cos(sim.yaw) * dt;
+  sim.yaw += (sim.v / PARAMS.wheelbase) * Math.tan(delta) * dt;
+
+  // Wrap yaw to (-π, π]
+  while (sim.yaw > Math.PI) sim.yaw -= 2 * Math.PI;
+  while (sim.yaw < -Math.PI) sim.yaw += 2 * Math.PI;
+
+  // Update visuals
+  otter.position.set(sim.x, 0, sim.z);
+  otter.rotation.y = sim.yaw;
+  wheelFL.rotation.y = delta;
+  wheelFR.rotation.y = delta;
+
+  addTrailPoint(sim.x, sim.z);
+
+  // Stats
+  document.getElementById('velVal').textContent = sim.v.toFixed(1) + ' m/s';
+  document.getElementById('yawVal').textContent = (sim.yaw * 180 / Math.PI).toFixed(1) + '°';
+  document.getElementById('posXVal').textContent = sim.x.toFixed(1);
+  document.getElementById('posZVal').textContent = sim.z.toFixed(1);
+
+  // Turn radius = L / tan(delta) when delta != 0
+  if (Math.abs(delta) > 0.005) {
+    const R = PARAMS.wheelbase / Math.abs(Math.tan(delta));
+    document.getElementById('radiusVal').textContent = R.toFixed(1) + ' m';
+  } else {
+    document.getElementById('radiusVal').textContent = '∞ m (recto)';
+  }
+}
+
+// Bind sliders
+function bindSlider(id, key, displayId, formatter) {
+  const slider = document.getElementById(id);
+  const display = document.getElementById(displayId);
+  slider.addEventListener('input', () => {
+    sim[key] = parseFloat(slider.value);
+    display.textContent = formatter(sim[key]);
+  });
+}
+bindSlider('thrust', 'thrust', 'thrustVal', v => v.toFixed(2));
+bindSlider('steering', 'steering', 'steeringVal', v => v.toFixed(2));
+
+// Buttons
+document.getElementById('pauseBtn').addEventListener('click', () => {
+  sim.paused = !sim.paused;
+  document.getElementById('pauseBtn').textContent = sim.paused ? '▶ Reanudar' : '⏸ Pausar';
+});
+
+document.getElementById('resetBtn').addEventListener('click', () => {
+  sim.x = 0; sim.z = 0; sim.yaw = 0; sim.v = 0;
+  sim.thrust = 0; sim.steering = 0;
+  document.getElementById('thrust').value = 0;
+  document.getElementById('steering').value = 0;
+  document.getElementById('thrustVal').textContent = '0.00';
+  document.getElementById('steeringVal').textContent = '0.00';
+  clearTrail();
+});
+
+document.getElementById('clearTrailBtn').addEventListener('click', clearTrail);
+
+document.querySelectorAll('.preset-row button[data-thrust]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    sim.thrust = parseFloat(btn.dataset.thrust);
+    sim.steering = parseFloat(btn.dataset.steering);
+    document.getElementById('thrust').value = sim.thrust;
+    document.getElementById('steering').value = sim.steering;
+    document.getElementById('thrustVal').textContent = sim.thrust.toFixed(2);
+    document.getElementById('steeringVal').textContent = sim.steering.toFixed(2);
+  });
+});
+
+function resizeRenderer() {
+  const rect = canvasWrap.getBoundingClientRect();
+  const w = Math.max(rect.width, 320);
+  const h = Math.max(rect.height, 320);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h, false);
+}
+window.addEventListener('resize', resizeRenderer);
+new ResizeObserver(resizeRenderer).observe(canvasWrap);
+
+let lastTime = performance.now();
+function animate() {
+  requestAnimationFrame(animate);
+  const now = performance.now();
+  const dt = Math.min((now - lastTime) / 1000, 0.05); // cap at 50ms
+  lastTime = now;
+
+  if (!sim.paused) {
+    step(dt);
+  }
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+</script>
+
+</body>
+</html>
