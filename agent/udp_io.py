@@ -1,23 +1,53 @@
 """Cliente UDP para Wakuseibokan.
 
-Dos canales:
-- Telemetría individual (puerto 4501+i): recibe ModelRecord (96 bytes) de NUESTRO vehículo.
-- Lobby (puerto 4500): recibe TickRecord broadcast de TODOS los vehículos. Requiere JoinOrder al puerto 5000.
+Dos clases:
+- UDPClient: motor base. Un socket recv en thread aparte, un socket send.
+- SharedTelemetryHub: wrapper que parsea ModelRecord y mantiene `{vid: ModelRecord}`
+  compartido entre threads. Cada endpoint de telemetría recibe broadcast de
+  TODOS los vehículos — un solo hub alcanza para ver al agente y al enemigo.
 
-Para training usamos el Lobby (tenemos GT del enemigo). Para eval usamos Telemetría individual.
+Tick budget — IMPORTANTE para el diseño de la política
+=======================================================
+El sim corre a 50 Hz (tick=20 ms). Cada tick nuestro código tiene que:
+    1. recv telemetría (asíncrono — ya está en el thread)
+    2. inferir acción (esto es lo que hay que medir cuando metamos la red NN)
+    3. enviar comando
+
+Si la inferencia + serialización tarda > 20 ms, los comandos llegan tarde y
+desincronizados. El sim los filtra (testcase_131.cpp:405 descarta si
+`timer - sourcetimer > 30000`) pero ese es un protector, no la solución.
+
+Política a seguir:
+- "Latest wins": al recibir telemetría nueva, se sobreescribe el dict. Si la
+  política está pensando, descarta lo viejo y usa lo último. Eso lo hace el
+  hub automáticamente.
+- Dimensionar la red neuronal para que `forward()` quepa cómodamente en 20 ms
+  en el hardware donde se va a deployar (CPU típicamente — la latencia de
+  trasladar a GPU + traer back puede ser peor).
+- Medir FPS reales del sim (min/max) antes de fijar el tick_dt del agente.
+
+Puertos del sim (testcase 131):
+- Telemetría OUT (sim → agente):  4601 (veh 1),  4602 (veh 2)
+- Comandos IN  (agente → sim):    4501 (veh 1),  4502 (veh 2)
+- Lobby broadcast (no usado hoy):  4500 — requiere JoinOrder a :5000 para
+  suscribirse. Parseo del TickRecord pendiente. Por ahora la telemetría
+  individual ya broadcastea todos los vehículos, así que no hace falta.
 """
 import socket
-import struct
 import threading
 import time
-from collections import deque
 from typing import Optional, Dict, Callable
 
 from . import packet_format as pf
 
 
 class UDPClient:
-    """Cliente UDP base con thread de recepción."""
+    """Cliente UDP base: un socket recv en thread aparte, un socket send.
+
+    Para usarlo se le pasa un callback `packet_handler(bytes)` que se invoca
+    por cada paquete recibido. El handler debe ser rápido (corre en el thread
+    de recepción).
+    """
 
     def __init__(self, recv_port: int, send_host: str = "127.0.0.1", send_port: int = 5000,
                  buffer_size: int = 1024):
@@ -25,16 +55,14 @@ class UDPClient:
         self.send_addr = (send_host, send_port)
         self.buffer_size = buffer_size
 
-        # Socket recv
         self.recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.recv_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.recv_sock.bind(("", recv_port))
+        # Timeout permite chequear el flag _stop cada 0.5s y salir limpio.
         self.recv_sock.settimeout(0.5)
 
-        # Socket send
         self.send_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-        # Stop flag
         self._stop = threading.Event()
         self._packet_handler: Optional[Callable[[bytes], None]] = None
         self._thread: Optional[threading.Thread] = None
@@ -76,144 +104,101 @@ class UDPClient:
             pass
 
 
-class TelemetryClient:
-    """Cliente para telemetría individual (puerto 4501+).
+class SharedTelemetryHub:
+    """Hub de telemetría con un dict `{vehicle_id: ModelRecord}` thread-safe.
 
-    Recibe ModelRecord (96 bytes) y mantiene un buffer circular de los últimos
-    K=30 ticks. Para enviar comandos usar el método send_command().
+    Modelo "latest wins": cada paquete sobreescribe el record anterior del
+    mismo vehículo. Si la política está pensando una acción cuando llega un
+    paquete nuevo, ese viejo se descarta. Eso es lo que queremos para
+    respetar el tick budget de 20 ms del sim (ver docstring del módulo).
     """
 
-    def __init__(self, recv_port: int = 4501, send_host: str = "127.0.0.1",
-                 send_port: int = 4501, buffer_size: int = 30):
-        # En testcase 131 el agente Python envía comandos al MISMO puerto donde
-        # recibe telemetría (4501+i), porque ahí escucha el simulador. Verificar.
+    def __init__(self, recv_port: int, send_host: str = "127.0.0.1",
+                 send_port: int = 4501):
         self.client = UDPClient(recv_port, send_host, send_port, buffer_size=128)
-        self.history: deque = deque(maxlen=buffer_size)
-        self._last_lock = threading.Lock()
+        self.latest: Dict[int, pf.ModelRecord] = {}
+        self._lock = threading.Lock()
 
     def start(self):
-        self.client.start(self._handle_packet)
+        self.client.start(self._on_packet)
 
-    def _handle_packet(self, data: bytes):
+    def _on_packet(self, data: bytes):
         if len(data) != pf.MODEL_RECORD_SIZE:
-            return  # ignorar paquetes de tamaño inesperado
+            return
         try:
             mr = pf.ModelRecord.from_bytes(data)
         except Exception:
             return
-        with self._last_lock:
-            self.history.append(mr)
+        with self._lock:
+            self.latest[mr.number] = mr
 
-    def latest(self) -> Optional[pf.ModelRecord]:
-        """Devuelve el último ModelRecord recibido, o None si no hay."""
-        with self._last_lock:
-            if len(self.history) == 0:
-                return None
-            return self.history[-1]
+    def all_latest(self) -> Dict[int, pf.ModelRecord]:
+        with self._lock:
+            return dict(self.latest)
 
-    def history_list(self) -> list:
-        with self._last_lock:
-            return list(self.history)
+    def get(self, vehicle_id: int) -> Optional[pf.ModelRecord]:
+        with self._lock:
+            return self.latest.get(vehicle_id)
 
-    def wait_for_first(self, timeout: float = 5.0) -> Optional[pf.ModelRecord]:
-        """Bloquea hasta recibir la primera telemetría o timeout."""
-        start = time.time()
-        while time.time() - start < timeout:
-            tr = self.latest()
-            if tr is not None:
-                return tr
+    def clear(self):
+        """Borra el estado conocido. Útil tras un hard reset del sim."""
+        with self._lock:
+            self.latest.clear()
+
+    def send_bytes(self, data: bytes):
+        self.client.send_bytes(data)
+
+    def wait_for_vehicles(self, vehicle_ids: list, timeout: float = 15.0) -> bool:
+        """Bloquea hasta ver telemetría de todos los vehículos dados o timeout."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            with self._lock:
+                if all(vid in self.latest for vid in vehicle_ids):
+                    return True
             time.sleep(0.02)
-        return None
+        return False
 
-    def send_command(self, cmd: pf.ControlStructure2):
-        # Actualizar sourcetimer si no fue setteado
-        if cmd.sourcetimer == 0:
-            cmd.sourcetimer = int(time.time() * 1000) & 0xFFFFFFFF
-        self.client.send_bytes(cmd.to_bytes())
+    def wait_for_health_reset(self, vehicle_ids: list, target_health: float = 999.0,
+                              timeout: float = 15.0) -> bool:
+        """Espera hasta que TODOS los vehículos tengan health ≥ target_health.
 
-    def stop(self):
-        self.client.stop()
-
-
-class LobbyClient:
-    """Cliente para el Lobby (puerto 4500).
-
-    Recibe broadcast de TickRecord de TODOS los vehículos. Para registrarse hay
-    que enviar un JoinOrder al puerto 5000 al inicio.
-
-    NOTA: el parseo de TickRecord está PENDIENTE de confirmar el formato exacto
-    capturando un paquete real (ver packet_format.py:TICK_RECORD_FORMAT_GUESS).
-    """
-
-    def __init__(self, recv_port: int = 4500, join_host: str = "127.0.0.1",
-                 join_port: int = 5000, faction: int = 1):
-        self.client = UDPClient(recv_port, join_host, join_port, buffer_size=512)
-        self.faction = faction
-        self.raw_packets: deque = deque(maxlen=500)  # guardamos crudos por ahora
-        self.by_vehicle: Dict[int, deque] = {}
-        self._lock = threading.Lock()
-
-    def start(self):
-        self.client.start(self._handle_packet)
-        # Enviar JoinOrder para registrarnos
-        join_pkt = pf.make_join_order(faction=self.faction)
-        self.client.send_bytes(join_pkt)
-        print(f"[LobbyClient] JoinOrder enviado a {self.client.send_addr}")
-
-    def _handle_packet(self, data: bytes):
-        # Por ahora solo guardamos los bytes crudos para análisis
-        with self._lock:
-            self.raw_packets.append((time.time(), data))
-
-    def raw_packet_sizes(self):
-        """Útil para descubrir el tamaño real del TickRecord."""
-        with self._lock:
-            return [(t, len(d)) for t, d in self.raw_packets]
-
-    def latest_raw(self) -> Optional[bytes]:
-        with self._lock:
-            if len(self.raw_packets) == 0:
-                return None
-            return self.raw_packets[-1][1]
+        Usado tras un soft reset del sim para detectar que arrancó el episodio
+        nuevo (testcase resetea health a 1000).
+        """
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            with self._lock:
+                ok = all(
+                    vid in self.latest and self.latest[vid].health >= target_health
+                    for vid in vehicle_ids
+                )
+            if ok:
+                return True
+            time.sleep(0.05)
+        return False
 
     def stop(self):
         self.client.stop()
 
 
 # ============================================================
-# Smoke test (para correr directo)
+# Smoke test: confirmar que la telemetría llega
 # ============================================================
 if __name__ == "__main__":
-    print("Iniciando smoke test del cliente UDP...")
-    print("(Asegurate de que el simulador está corriendo con testcase 131)")
+    print("Smoke test del cliente UDP. Necesita el sim corriendo con testcase 131.")
 
-    # Telemetría individual
-    tel = TelemetryClient(recv_port=4501, send_port=4501)
-    tel.start()
-    print(f"Escuchando telemetría en puerto 4501...")
+    hub = SharedTelemetryHub(recv_port=4601, send_port=4501)
+    hub.start()
+    print("Escuchando telemetría en 4601 (envío comandos a 4501)...")
 
-    first = tel.wait_for_first(timeout=10.0)
-    if first is None:
-        print("⚠️  No se recibió ninguna telemetría. ¿El simulador está corriendo?")
+    ok = hub.wait_for_vehicles([1, 2], timeout=10.0)
+    if not ok:
+        print("⚠️  No llegó telemetría de ambos vehículos.")
     else:
-        print(f"✓ Primer ModelRecord recibido:")
-        print(f"  vehicle #{first.number} pos={first.pos} health={first.health}")
-        print(f"  rotation matrix:")
-        print(f"  {first.rotation_matrix_3x3()}")
+        snap = hub.all_latest()
+        for vid, mr in snap.items():
+            print(f"  veh #{vid}  pos={mr.pos}  health={mr.health}  "
+                  f"recordtimer={mr.recordtimer}")
 
-    # Lobby
-    lobby = LobbyClient(recv_port=4500, join_port=5000)
-    lobby.start()
-    print(f"Escuchando Lobby en puerto 4500...")
-    time.sleep(3.0)
-    sizes = lobby.raw_packet_sizes()
-    if sizes:
-        unique_sizes = set(s for _, s in sizes)
-        print(f"✓ {len(sizes)} paquetes recibidos del Lobby. Tamaños: {unique_sizes}")
-    else:
-        print("⚠️  No se recibieron paquetes del Lobby.")
-
-    # Cleanup
-    tel.stop()
-    lobby.stop()
+    hub.stop()
     print("Listo.")

@@ -1,180 +1,216 @@
-"""Evaluación de un modelo entrenado contra el simulador.
+"""Eval del modelo CQL entrenado contra SeekAndDestroy o cheater.
 
-Carga un modelo (.pt de d3rlpy o .zip de stable-baselines3) y lo corre
-contra el simulador, midiendo win rate, retorno promedio, etc.
+Setup esperado:
+    # Terminal A: ./testcase -mute -nointro -episodes
+    # Terminal B: cd scripts && python3 SeekAndDestroy.py 2   # rival
+    # Terminal C: python -m agent.eval --model models/otter_cql_v1.d3 --episodes 10
 
-Uso:
-    python -m agent.eval --model models/otter_cql_v1.pt --episodes 50
+Carga el modelo formato `.d3` (nativo de d3rlpy) bajado de Colab.
+
+Los encoders están en agent/encoders.py (compartidos con env.py y training).
 """
 import argparse
 import time
 import numpy as np
-import torch
-from pathlib import Path
+from threading import Lock
 
 from . import packet_format as pf
-from .udp_io import TelemetryClient
-from .state_encoder import StateEncoder, OBS_DIM_BASIC
-from .dispatcher import action_to_command
+from .udp_io import UDPClient
+from .encoders import OBS_DIM, ACT_DIM, encode_state, decode_action
 
 
-def load_d3rlpy_model(path: str):
-    """Carga un modelo .pt guardado desde d3rlpy.
+# ============================================================
+# Cargar modelo CQL
+# ============================================================
 
-    Devuelve una función `policy(obs) -> action`.
-    """
-    checkpoint = torch.load(path, map_location="cpu")
-    print(f"Modelo cargado de {path}")
-    print(f"  obs_dim: {checkpoint['obs_dim']}")
-    print(f"  action_dim: {checkpoint['action_dim']}")
+def load_cql_model(path: str):
+    """Carga modelo .d3 de d3rlpy y devuelve fn predict(obs) -> action."""
+    try:
+        import torch as _torch
+        import d3rlpy
+    except ImportError:
+        raise SystemExit(
+            "Falta d3rlpy. Instalá con:\n"
+            "    pip install d3rlpy torch\n"
+            "(torch ~750 MB)"
+        )
+    # PyTorch 2.6+ default weights_only=True rompe carga de d3rlpy.
+    _orig_load = _torch.load
+    def _patched_load(*a, **kw):
+        kw.setdefault("weights_only", False)
+        return _orig_load(*a, **kw)
+    _torch.load = _patched_load
 
-    # TODO: reconstruir la policy desde state_dict
-    # Por ahora devolvemos random como placeholder
-    def policy(obs):
-        return np.random.uniform(-1, 1, size=checkpoint["action_dim"]).astype(np.float32)
-    return policy
+    # Los .d3 de checkpoint son formato compuesto de d3rlpy (metadata + weights).
+    # Hay que usar load_learnable, NO cql.load_model().
+    cql = d3rlpy.load_learnable(path, device="cpu:0")
+    print(f"✓ Modelo {path} cargado (action_size={cql.action_size})")
+
+    def predict(obs: np.ndarray) -> np.ndarray:
+        return cql.predict(obs.reshape(1, -1))[0]
+
+    return predict
 
 
-def load_sb3_model(path: str):
-    """Carga un modelo .zip de stable-baselines3."""
-    from stable_baselines3 import SAC
-    model = SAC.load(path, device="cpu")
+# ============================================================
+# Episodio
+# ============================================================
 
-    def policy(obs):
-        action, _ = model.predict(obs, deterministic=True)
-        return action
-    return policy
-
-
-def run_eval_episode(
-    tel_client: TelemetryClient,
-    encoder: StateEncoder,
-    policy_fn,
-    max_ticks: int = 5000,
-    tick_dt: float = 0.02,
-    vehicle_id: int = 1,
-):
-    """Corre un episodio de evaluación."""
-    encoder.reset()
-    total_reward = 0.0
+def run_episode(mini, predict_fn, vehicle_id, max_seconds=90, tick_dt=0.05):
+    start = time.time()
+    last_timer = -1
+    no_update = 0
+    episode_started = False
     n_ticks = 0
-    initial_health = 1000.0
-    final_health = 0.0
-    won = False
+    h0_me = h0_oth = None
+    hf_me = hf_oth = None
 
-    mr = tel_client.wait_for_first(timeout=10.0)
-    if mr is None:
-        return {"error": "no_telemetry"}
-
-    obs = encoder.encode(mr, last_action_fire=False)
-    last_health = mr.health
-    initial_health = mr.health
-
-    for tick in range(max_ticks):
-        # Política
-        action = policy_fn(obs)
-
-        # Comando
-        cmd = action_to_command(action, controlling_id=vehicle_id, current_state=mr)
-        tel_client.send_command(cmd)
-        last_action_fire = (cmd.command == pf.CMD_FIRE)
-
+    while time.time() - start < max_seconds:
         time.sleep(tick_dt)
-        mr = tel_client.latest()
-        if mr is None:
-            break
+        snap = mini.all_latest()
+        if not snap:
+            continue
 
-        obs = encoder.encode(mr, last_action_fire=last_action_fire)
+        valid = {vid: mr for vid, mr in snap.items() if mr.health > -1000}
+        if vehicle_id not in valid:
+            continue
+        others = [v for v in valid if v != vehicle_id]
+        if not others:
+            continue
 
-        # Reward (mismo cálculo que collect.py para comparabilidad)
-        delta_h = last_health - mr.health
-        extra_dmg = max(0.0, delta_h - 1.0)
-        r = -5.0 * extra_dmg + 0.04
-        if last_action_fire:
-            r -= 0.3
-        if mr.health <= 0:
-            r -= 500
-            total_reward += r
-            break
+        my_mr = valid[vehicle_id]
+        other_mr = valid[others[0]]
 
-        total_reward += r
-        last_health = mr.health
+        if not episode_started:
+            if all(mr.health > 0 for mr in valid.values()):
+                episode_started = True
+                h0_me, h0_oth = my_mr.health, other_mr.health
+            else:
+                continue
+
         n_ticks += 1
+        obs = encode_state(my_mr, other_mr)
+        action = predict_fn(obs)
+        cmd = decode_action(action, my_mr)
+        mini.send_bytes(cmd.to_bytes())
 
-    final_health = mr.health if mr else 0
-    won = final_health > 0 and n_ticks < max_ticks  # heurística: sobrevivimos
+        hf_me, hf_oth = my_mr.health, other_mr.health
 
+        if any(mr.health <= 0 for mr in valid.values()):
+            break
+
+        cur_t = max(mr.recordtimer for mr in valid.values())
+        if cur_t == last_timer:
+            no_update += 1
+            if no_update > 100:
+                break
+        else:
+            no_update = 0
+            last_timer = cur_t
+
+    won = hf_me is not None and hf_me > 0 and hf_oth is not None and hf_oth <= 0
+    lost = hf_me is not None and hf_me <= 0
     return {
         "ticks": n_ticks,
-        "total_reward": total_reward,
-        "initial_health": initial_health,
-        "final_health": final_health,
-        "won": won,
+        "h0_me": h0_me, "hf_me": hf_me,
+        "h0_oth": h0_oth, "hf_oth": hf_oth,
+        "won": won, "lost": lost,
+        "draw": not won and not lost,
     }
 
 
+# ============================================================
+# Main
+# ============================================================
+
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, required=True,
-                        help="Path al modelo (.pt de d3rlpy o .zip de SB3)")
-    parser.add_argument("--episodes", type=int, default=20)
-    parser.add_argument("--telemetry-port", type=int, default=4501)
-    parser.add_argument("--vehicle-id", type=int, default=1)
-    parser.add_argument("--tick-dt", type=float, default=0.02)
-    args = parser.parse_args()
+    p = argparse.ArgumentParser()
+    p.add_argument("--model", type=str, required=True,
+                   help="Path al .d3 entrenado en Colab")
+    p.add_argument("--episodes", type=int, default=10)
+    p.add_argument("--vehicle-id", type=int, default=1)
+    p.add_argument("--recv-port", type=int, default=None)
+    p.add_argument("--send-port", type=int, default=None)
+    p.add_argument("--send-host", type=str, default="127.0.0.1")
+    p.add_argument("--max-seconds", type=int, default=90)
+    p.add_argument("--tick-dt", type=float, default=0.05)
+    p.add_argument("--inter-episode-wait", type=float, default=3.0)
+    args = p.parse_args()
 
-    # Cargar modelo
-    if args.model.endswith(".zip"):
-        policy_fn = load_sb3_model(args.model)
-    else:
-        policy_fn = load_d3rlpy_model(args.model)
+    if args.recv_port is None:
+        args.recv_port = 4600 + args.vehicle_id
+    if args.send_port is None:
+        args.send_port = 4500 + args.vehicle_id
 
-    encoder = StateEncoder()
+    print(f"[Eval CQL] Otter #{args.vehicle_id}  recv:{args.recv_port} send:{args.send_port}")
+    print(f"  model: {args.model}")
+    print(f"  Asegurate de que SeekAndDestroy controla al Otter #"
+          f"{2 if args.vehicle_id == 1 else 1}.\n")
 
-    # Conectar
-    tel = TelemetryClient(
-        recv_port=args.telemetry_port,
-        send_port=args.telemetry_port,
-    )
-    tel.start()
+    predict = load_cql_model(args.model)
 
-    # Correr episodios
+    client = UDPClient(recv_port=args.recv_port, send_host=args.send_host,
+                       send_port=args.send_port)
+    latest = {}
+    lock = Lock()
+
+    def on_packet(data):
+        if len(data) != pf.MODEL_RECORD_SIZE:
+            return
+        try:
+            mr = pf.ModelRecord.from_bytes(data)
+        except Exception:
+            return
+        with lock:
+            latest[mr.number] = mr
+
+    class Mini:
+        def all_latest(self_):
+            with lock:
+                return dict(latest)
+        def send_bytes(self_, data):
+            client.send_bytes(data)
+
+    client.start(on_packet)
+    mini = Mini()
+
+    print("Esperando telemetría...")
+    deadline = time.time() + 15
+    while time.time() < deadline and not mini.all_latest():
+        time.sleep(0.1)
+    if not mini.all_latest():
+        print("⚠️  No llega telemetría.")
+        client.stop()
+        return
+    print(f"✓ Vehículos vistos: {sorted(mini.all_latest().keys())}\n")
+
     results = []
-    wins = 0
-    print(f"\nEvaluando modelo en {args.episodes} episodios...")
-    print("=" * 60)
+    w = l = d = 0
+    try:
+        for i in range(args.episodes):
+            print(f"=== Ep {i + 1}/{args.episodes} ===")
+            res = run_episode(mini, predict, args.vehicle_id,
+                               max_seconds=args.max_seconds, tick_dt=args.tick_dt)
+            tag = "WIN " if res["won"] else ("LOSS" if res["lost"] else "DRAW")
+            w += int(res["won"]); l += int(res["lost"]); d += int(res["draw"])
+            print(f"  [{tag}] ticks={res['ticks']:4d}  "
+                  f"me {res['h0_me']:.0f}→{res['hf_me']:.0f}  "
+                  f"oth {res['h0_oth']:.0f}→{res['hf_oth']:.0f}")
+            results.append(res)
+            time.sleep(args.inter_episode_wait)
+    except KeyboardInterrupt:
+        print("\nInterrumpido.")
+    finally:
+        client.stop()
 
-    for ep in range(args.episodes):
-        result = run_eval_episode(
-            tel, encoder, policy_fn,
-            tick_dt=args.tick_dt,
-            vehicle_id=args.vehicle_id,
-        )
-        if "error" in result:
-            print(f"Ep {ep + 1}: ERROR {result['error']}")
-            continue
-
-        if result["won"]:
-            wins += 1
-        results.append(result)
-        win_rate = wins / (ep + 1)
-        print(f"Ep {ep + 1:2d}: ticks={result['ticks']:4d}  "
-              f"G={result['total_reward']:7.1f}  "
-              f"final_health={result['final_health']:.0f}  "
-              f"{'✓ WIN' if result['won'] else '✗ LOSS'}  "
-              f"win_rate={win_rate:.2%}")
-
-    tel.stop()
-
-    # Stats finales
-    if results:
-        rewards = [r["total_reward"] for r in results]
-        ticks = [r["ticks"] for r in results]
-        print("\n" + "=" * 60)
-        print(f"Stats finales:")
-        print(f"  Win rate:    {wins / len(results):.2%}  ({wins}/{len(results)})")
-        print(f"  Retorno:     {np.mean(rewards):.1f} ± {np.std(rewards):.1f}")
-        print(f"  Duración:    {np.mean(ticks):.0f} ± {np.std(ticks):.0f} ticks")
+    n = len(results)
+    if n:
+        print("\n" + "=" * 50)
+        print(f"Win rate:  {w / n:.1%}  ({w}/{n})")
+        print(f"Loss rate: {l / n:.1%}  ({l}/{n})")
+        print(f"Draw rate: {d / n:.1%}  ({d}/{n})")
+        avg_ticks = float(np.mean([r["ticks"] for r in results]))
+        print(f"Duración promedio: {avg_ticks:.0f} ticks (~{avg_ticks * 0.05:.0f}s)")
 
 
 if __name__ == "__main__":

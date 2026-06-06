@@ -88,18 +88,20 @@ class ModelRecord:
 # Tamaño: 68 bytes
 # ============================================================
 
-CONTROL_STRUCT2_FORMAT = "<i6fii iiifff iiI"
+CONTROL_STRUCT2_FORMAT = "<i6fiiii3fiiI"
 # Desglose:
-#   <i           controllingid (int32)
+#   <            little-endian, packed
+#   i            controllingid (int32)
 #   6f           thrust, roll, pitch, yaw, precesion, bank (controlregister2)
 #   i            faction (int32)
 #   i            command (int32)
 #   i            spawnid (int32)
 #   i            typeofisland (int32)
-#   fff          x, y, z (3 floats)
+#   3f           x, y, z (3 floats)
 #   i            target_type (int32)
 #   i            weapon (int32)
 #   I            sourcetimer (uint32)
+
 CONTROL_STRUCT2_SIZE = struct.calcsize(CONTROL_STRUCT2_FORMAT)
 assert CONTROL_STRUCT2_SIZE == 68, f"ControlStructure2 debe ser 68 bytes, no {CONTROL_STRUCT2_SIZE}"
 

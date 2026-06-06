@@ -8,20 +8,41 @@ contra otro Otter usando Reinforcement Learning (SAC).
 ```
 agent/
 ├── packet_format.py        # Parse/pack de ModelRecord, ControlStructure2, TickRecord
-├── udp_io.py               # Cliente UDP: telemetría individual + Lobby
-├── state_encoder.py        # Convierte ModelRecord crudo en vector de features
-├── dispatcher.py           # Acción → ControlStructure2 + trigger discipline
-├── collect.py              # Recolecta dataset HDF5 (random/scripted policy)
+├── udp_io.py               # Cliente UDP base + SharedTelemetryHub (telemetría thread-safe)
+├── encoders.py             # encode_state (12-D) + decode_action (6-D) compartidos
+├── reward.py               # Reward shaping del combate (función pura)
+├── policy_utils.py         # Helpers compartidos (azimuth, bearing relativo)
+├── seek_policy.py          # Política scripted con 4 modos (engage/escape/evasive/noise)
+├── cheater_policy.py       # Oponente privilegiado con 4 niveles de dificultad
+├── env.py                  # Gymnasium env wrapper (soft/hard reset, cheater integrado)
+├── collect_vs_cheater.py   # Recolector con cheater oponente en proceso único
 ├── eval.py                 # Evalúa un modelo entrenado contra el simulador
 ├── colab/
-│   ├── train_offline_colab.py  # Script para entrenar en Colab (offline RL)
+│   ├── train_otter_cql.py      # Script para entrenar CQL en Colab
 │   └── COLAB_WORKFLOW.md       # Workflow paso a paso de Colab
 ├── map_belief.py           # (PENDIENTE) Belief incremental del city center
 ├── state_estimator.py      # (PENDIENTE) LSTM que infiere belief enemigo
-├── env.py                  # (PENDIENTE) Gymnasium env wrapper
-├── tests/                  # Tests unitarios
+├── tests/                  # Tests unitarios (sin sim)
 └── requirements.txt
 ```
+
+## Estrategia de entrenamiento
+
+1. **Fábrica de datos**: `agent.collect_vs_cheater` corre dos threads en el
+   mismo proceso. Otter 1 controlado por `seek_policy` (con variación por
+   episodio + noise) es el que GRABAMOS. Otter 2 es un `cheater_policy` con
+   información privilegiada (telemetría de ambos vehículos).
+2. **Mix de oponentes**: 4 niveles de dificultad (EASY → IMPOSSIBLE) calibrados
+   para que el dataset tenga victorias y derrotas en proporciones útiles para
+   offline RL. Default sugerido: `easy:150,medium:300,hard:300,impossible:75`.
+3. **Filtro de calidad**: episodios donde los tanques nunca se cruzaron
+   (`min_dist > 800m` en toda la trayectoria) se marcan con `had_encounter=False`
+   y se descartan en el training.
+4. **Training offline**: `colab/train_otter_cql.py` carga el HDF5, construye
+   el MDP y entrena CQL (d3rlpy) en Colab T4.
+5. **Fine-tuning online (opcional)**: `agent.env.OtterEnv` cumple Gymnasium API
+   estándar; se puede enchufar a stable-baselines3 SAC con `reset_mode="hard"`
+   para variar el mapa entre episodios.
 
 ## Workflow Colab (training pesado en GPU remota)
 
@@ -65,14 +86,23 @@ pip install -r agent/requirements.txt
 
 ```bash
 # Desde la raíz del repo
-make
+# IMPORTANTE: el testcase queda hardcoded en el binario al compilar.
+# Hay que especificar TC=131 explícitamente.
+make TC=131 testcase
 ```
 
-### 2. Levantar el simulador con testcase 131
+### 2. Levantar el simulador
 
 ```bash
-./testcase -mute -nointro -testcase 131
+./testcase -mute -nointro
 ```
+
+El binario ya tiene el testcase 131 compilado adentro, no hace falta pasarlo
+como argumento. Si quisieras cambiar de testcase tenés que recompilar con otro
+TC (ej: `make TC=121 testcase`).
+
+Verificá que en el HUD del simulador aparece "TC131:". Si dice otro número
+(ej "TC111"), recompilá con `make clean && make TC=131 testcase`.
 
 (En otra terminal:)
 
@@ -88,47 +118,48 @@ Deberías ver mensajes tipo:
   vehicle #1 pos=[...] health=1000.0
 ```
 
-### 4. Probar el state encoder con datos falsos
+### 4. Recolectar dataset vs cheater
 
 ```bash
-python -m agent.state_encoder
+python -m agent.collect_vs_cheater --difficulty mixed \
+    --mix-plan "easy:150,medium:300,hard:300,impossible:75" \
+    --output data/dataset_v2.h5
 ```
 
-### 5. Probar el dispatcher
+### 5. Smoke tests (sin sim)
 
 ```bash
-python -m agent.dispatcher
+python3 -c "
+import sys; sys.path.insert(0, '.')
+from agent.tests.test_cheater_policy import *
+from agent.tests.test_env_smoke import *
+"
 ```
 
 ## Roadmap de implementación
 
-### Semana 1 — Pipeline mínimo + dataset
+### Bloque actual (en curso) — Datos vs cheater + env.py
 
-- [x] `packet_format.py` — structs UDP
-- [x] `udp_io.py` — cliente UDP
-- [x] `state_encoder.py` — encoder básico (18 floats)
-- [x] `dispatcher.py` — comando + trigger discipline
-- [ ] Capturar paquetes reales del Lobby para confirmar formato del TickRecord
-- [ ] `env.py` — Gymnasium env mínimo (con random policy)
-- [ ] Recolectar 200-500 episodios para dataset
+- [x] `packet_format.py`, `udp_io.py` — base UDP
+- [x] `encoders.py`, `reward.py`, `policy_utils.py` — single source of truth
+- [x] `seek_policy.py` — política de "fábrica de datos" con 4 modos
+- [x] `cheater_policy.py` — oponente privilegiado con 4 niveles
+- [x] `collect_vs_cheater.py` — recolector dual-thread
+- [x] `env.py` — Gymnasium wrapper con soft/hard reset
+- [x] Tests del cheater + smoke tests del env
+- [ ] Recolectar ~800-1000 episodios mixed → `data/dataset_v2.h5`
+- [ ] Verificar win-rates por nivel (calibración del cheater)
 
-### Semana 2 — Imitation learning + State Estimator
+### Próximo — State Estimator + State of map
 
 - [ ] `state_estimator.py` — LSTM para belief del enemigo
 - [ ] `map_belief.py` — belief del city center
-- [ ] Entrenar State Estimator supervisado con GT del Lobby
-- [ ] Imitation learning warm-start de la política
 
-### Semana 3 — SAC
+### Después — Training serio
 
-- [ ] `train.py` — script SAC con stable-baselines3
-- [ ] Training offline con CQL en Colab
-- [ ] Eval vs baseline
-
-### Semana 4 — Refinement + entrega
-
-- [ ] Opcional: self-play
-- [ ] Eval final
+- [ ] Training offline CQL/IQL en Colab con `data/dataset_v2.h5`
+- [ ] Fine-tuning online SAC con `env.OtterEnv(reset_mode="hard")`
+- [ ] Eval matriz (modelo × nivel de cheater)
 - [ ] Video demo
 
 ## Convenciones del código

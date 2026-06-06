@@ -1,13 +1,17 @@
-"""Wakuseibokan Otter Agent — Physical AI con SAC.
+"""Wakuseibokan Otter Agent — Physical AI con offline RL + online SAC.
 
 Estructura:
     packet_format    : parse/pack de ModelRecord y ControlStructure2
-    udp_io           : cliente UDP (recv telemetría, send comandos)
-    state_encoder    : convierte telemetría cruda a vector de features
-    map_belief       : belief incremental del city center
-    state_estimator  : LSTM que infiere belief del enemigo
-    dispatcher       : trigger discipline + envío de comandos
-    env              : Gymnasium environment wrapper
-    train            : script de entrenamiento SAC
-    eval             : script de evaluación
+    udp_io           : cliente UDP base + SharedTelemetryHub (telemetría thread-safe)
+    encoders         : encode_state (12-D) y decode_action (6-D) — single source
+                       of truth para training y deployment
+    reward           : reward shaping del combate (función pura)
+    policy_utils     : helpers compartidos entre seek y cheater (azimuth, bearing)
+    seek_policy      : política scripted con 4 modos (engage/escape/evasive/noise)
+                       — usada como "fábrica de datos" del Otter 1
+    cheater_policy   : oponente con información privilegiada y 4 niveles de
+                       dificultad — usado como Otter 2 en training
+    env              : Gymnasium env wrapper (online RL con SAC)
+    collect_vs_cheater: recolector con cheater oponente en proceso único
+    eval             : evaluación de modelos entrenados contra oponente externo
 """

@@ -28,7 +28,8 @@ El simulador corre en tu máquina, el script de recolección lo controla y graba
 make
 
 # En una terminal: levantar simulador
-./testcase -mute -nointro -testcase 131
+make TC=131 testcase    # compilar con TC 131 hardcoded
+./testcase -mute -nointro
 
 # En otra terminal: recolectar 100 episodios con política random
 python -m agent.collect \
@@ -44,11 +45,13 @@ Para acelerar, podés correr múltiples instancias en paralelo (en puertos disti
 
 ```bash
 # Terminal 1
-./testcase -mute -nointro -testcase 131 -port 4501
+make TC=131 testcase    # compilar con TC 131 hardcoded
+./testcase -mute -nointro -port 4501
 python -m agent.collect --telemetry-port 4501 --output data/ds_1.h5 ...
 
 # Terminal 2
-./testcase -mute -nointro -testcase 131 -port 4502
+make TC=131 testcase    # compilar con TC 131 hardcoded
+./testcase -mute -nointro -port 4502
 python -m agent.collect --telemetry-port 4502 --output data/ds_2.h5 ...
 ```
 
