@@ -151,6 +151,13 @@ class Controller:
                 self.recorder.recordvalues(myvalues,othervalues)
                 
                 print (f"Tank {myvalues[td['number']]}: x={myvalues[td['x']]:.2f}, z={myvalues[td['z']]:.2f}, Radar X={myvalues[td['radarx']]:.2f}, Radar Y={myvalues[td['radary']]:.2f}, Radar Z={myvalues[td['radarz']]:.2f}, health={myvalues[td['health']]:.2f}")
+
+                # DEBUG temporal: distancias
+                _vec2dtotarget = (float(othervalues[td['x']])-float(myvalues[td['x']]), float(othervalues[td['z']])-float(myvalues[td['z']]))
+                _td = math.sqrt(_vec2dtotarget[0]**2 + _vec2dtotarget[1]**2)
+                _pd = math.sqrt(float(myvalues[td['x']])**2 + float(myvalues[td['z']])**2)
+                _bearing = aim(myvalues, othervalues)
+                print(f"   target_dist={_td:.1f}  polar_dist={_pd:.1f}  bearing={_bearing:.1f}  FIRE_zone={_td<200}")
                 
                 
                 #m -------
